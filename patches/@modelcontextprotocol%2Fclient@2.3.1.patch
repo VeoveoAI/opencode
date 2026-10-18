@@ -1,7 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
+index 71cf63076b073284aa14f63cd41efa653e8def0f..632b411299a17548cc52b801e719df0f8d91c4b0 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -1038,7 +1038,6 @@
+@@ -1038,7 +1038,6 @@ async function discoverMetadataWithFallback(serverUrl, wellKnownType, fetchFn, o
  	else {
  		const wellKnownPath = buildWellKnownPath(wellKnownType, issuer.pathname);
  		url = new URL(wellKnownPath, opts?.metadataServerUrl ?? issuer);
@@ -9,7 +10,7 @@ diff --git a/dist/index.cjs b/dist/index.cjs
  	}
  	let response = await tryMetadataDiscovery(url, protocolVersion, fetchFn);
  	if (!opts?.metadataUrl && shouldAttemptFallback(response, issuer.pathname)) response = await tryMetadataDiscovery(new URL(`/.well-known/${wellKnownType}`, issuer), protocolVersion, fetchFn);
-@@ -1222,7 +1221,6 @@
+@@ -1222,7 +1221,6 @@ async function startAuthorization(authorizationServerUrl, { metadata, clientInfo
  	authorizationUrl.searchParams.set("redirect_uri", String(redirectUrl));
  	if (state) authorizationUrl.searchParams.set("state", state);
  	if (scope) authorizationUrl.searchParams.set("scope", scope);
@@ -17,7 +18,30 @@ diff --git a/dist/index.cjs b/dist/index.cjs
  	if (resource) authorizationUrl.searchParams.set("resource", resourceIndicatorToString(resource));
  	return {
  		authorizationUrl,
-@@ -4120,7 +4118,7 @@
+@@ -3964,10 +3962,10 @@ var Client = class extends require_src.Protocol {
+ 	* `listen()` is era-transparent for consumers that already register those.
+ 	*
+ 	* `close()` tears the subscription down by aborting the listen request's
+-	* `requestSignal` (closes the SSE stream where the transport honors it)
+-	* AND sending `notifications/cancelled` referencing the listen request id
+-	* — both, unconditionally, so any spec-compliant server on any transport
+-	* sees the cancel. No automatic re-listen — call `listen()` again to
++	* `requestSignal`. Transports with per-request streams (Streamable HTTP)
++	* use that stream closure as the cancellation signal; other transports
++	* receive `notifications/cancelled` referencing the listen request id.
++	* No automatic re-listen — call `listen()` again to
+ 	* re-establish.
+ 	*
+ 	* On a 2025-era connection this throws a typed
+@@ -4022,6 +4020,7 @@ var Client = class extends require_src.Protocol {
+ 		};
+ 		const wireTeardown = async () => {
+ 			requestAbort.abort();
++			if (this.transport?.hasPerRequestStream === true) return;
+ 			await this.notification({
+ 				method: "notifications/cancelled",
+ 				params: { requestId: listenId }
+@@ -4120,7 +4119,7 @@ var Client = class extends require_src.Protocol {
  			const entry = typeof subscriptionId === "string" ? this._listenState.get(subscriptionId) : void 0;
  			if (entry !== void 0) {
  				const honored = this._wireCodec().validateNotification("notifications/subscriptions/acknowledged", raw);
@@ -26,10 +50,49 @@ diff --git a/dist/index.cjs b/dist/index.cjs
  				return;
  			}
  		}
+diff --git a/dist/index.d.cts b/dist/index.d.cts
+index d4244e7f112515415c28365980f2bcb0eb34ee61..7bd5adb48b1d19aa4c1155efdf2129321acc617d 100644
+--- a/dist/index.d.cts
++++ b/dist/index.d.cts
+@@ -2595,10 +2595,10 @@ declare class Client extends Protocol<ClientContext> {
+    * `listen()` is era-transparent for consumers that already register those.
+    *
+    * `close()` tears the subscription down by aborting the listen request's
+-   * `requestSignal` (closes the SSE stream where the transport honors it)
+-   * AND sending `notifications/cancelled` referencing the listen request id
+-   * — both, unconditionally, so any spec-compliant server on any transport
+-   * sees the cancel. No automatic re-listen — call `listen()` again to
++   * `requestSignal`. Transports with per-request streams (Streamable HTTP)
++   * use that stream closure as the cancellation signal; other transports
++   * receive `notifications/cancelled` referencing the listen request id.
++   * No automatic re-listen — call `listen()` again to
+    * re-establish.
+    *
+    * On a 2025-era connection this throws a typed
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index 3af7065405bbba4689dc114822727ec7a3ac4cbc..222a393803fe8d9808af5fc34ff1c0d975fb3c28 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -2595,10 +2595,10 @@ declare class Client extends Protocol<ClientContext> {
+    * `listen()` is era-transparent for consumers that already register those.
+    *
+    * `close()` tears the subscription down by aborting the listen request's
+-   * `requestSignal` (closes the SSE stream where the transport honors it)
+-   * AND sending `notifications/cancelled` referencing the listen request id
+-   * — both, unconditionally, so any spec-compliant server on any transport
+-   * sees the cancel. No automatic re-listen — call `listen()` again to
++   * `requestSignal`. Transports with per-request streams (Streamable HTTP)
++   * use that stream closure as the cancellation signal; other transports
++   * receive `notifications/cancelled` referencing the listen request id.
++   * No automatic re-listen — call `listen()` again to
+    * re-establish.
+    *
+    * On a 2025-era connection this throws a typed
 diff --git a/dist/index.mjs b/dist/index.mjs
+index c1a09a82b8121d6a1b038ccc6d02bae46d55dbcf..a13512228f4e71343369f0bd44dafd631433f628 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -1035,7 +1035,6 @@
+@@ -1035,7 +1035,6 @@ async function discoverMetadataWithFallback(serverUrl, wellKnownType, fetchFn, o
  	else {
  		const wellKnownPath = buildWellKnownPath(wellKnownType, issuer.pathname);
  		url = new URL(wellKnownPath, opts?.metadataServerUrl ?? issuer);
@@ -37,7 +100,7 @@ diff --git a/dist/index.mjs b/dist/index.mjs
  	}
  	let response = await tryMetadataDiscovery(url, protocolVersion, fetchFn);
  	if (!opts?.metadataUrl && shouldAttemptFallback(response, issuer.pathname)) response = await tryMetadataDiscovery(new URL(`/.well-known/${wellKnownType}`, issuer), protocolVersion, fetchFn);
-@@ -1219,7 +1218,6 @@
+@@ -1219,7 +1218,6 @@ async function startAuthorization(authorizationServerUrl, { metadata, clientInfo
  	authorizationUrl.searchParams.set("redirect_uri", String(redirectUrl));
  	if (state) authorizationUrl.searchParams.set("state", state);
  	if (scope) authorizationUrl.searchParams.set("scope", scope);
@@ -45,7 +108,30 @@ diff --git a/dist/index.mjs b/dist/index.mjs
  	if (resource) authorizationUrl.searchParams.set("resource", resourceIndicatorToString(resource));
  	return {
  		authorizationUrl,
-@@ -4117,7 +4115,7 @@
+@@ -3961,10 +3959,10 @@ var Client = class extends Protocol {
+ 	* `listen()` is era-transparent for consumers that already register those.
+ 	*
+ 	* `close()` tears the subscription down by aborting the listen request's
+-	* `requestSignal` (closes the SSE stream where the transport honors it)
+-	* AND sending `notifications/cancelled` referencing the listen request id
+-	* — both, unconditionally, so any spec-compliant server on any transport
+-	* sees the cancel. No automatic re-listen — call `listen()` again to
++	* `requestSignal`. Transports with per-request streams (Streamable HTTP)
++	* use that stream closure as the cancellation signal; other transports
++	* receive `notifications/cancelled` referencing the listen request id.
++	* No automatic re-listen — call `listen()` again to
+ 	* re-establish.
+ 	*
+ 	* On a 2025-era connection this throws a typed
+@@ -4019,6 +4017,7 @@ var Client = class extends Protocol {
+ 		};
+ 		const wireTeardown = async () => {
+ 			requestAbort.abort();
++			if (this.transport?.hasPerRequestStream === true) return;
+ 			await this.notification({
+ 				method: "notifications/cancelled",
+ 				params: { requestId: listenId }
+@@ -4117,7 +4116,7 @@ var Client = class extends Protocol {
  			const entry = typeof subscriptionId === "string" ? this._listenState.get(subscriptionId) : void 0;
  			if (entry !== void 0) {
  				const honored = this._wireCodec().validateNotification("notifications/subscriptions/acknowledged", raw);
@@ -55,9 +141,10 @@ diff --git a/dist/index.mjs b/dist/index.mjs
  			}
  		}
 diff --git a/dist/src-DpAS0jfg.cjs b/dist/src-DpAS0jfg.cjs
+index e2ffe6482e0d8eed88082215547ccde7b5ef2d37..126d0abba0525b14a77150cadefaa334053d779a 100644
 --- a/dist/src-DpAS0jfg.cjs
 +++ b/dist/src-DpAS0jfg.cjs
-@@ -3063,7 +3063,7 @@
+@@ -3063,7 +3063,7 @@ function build() {
  	const CompleteRequestSchema$1 = wireRequest("completion/complete", completeParamsShape);
  	const DiscoverRequestSchema$1 = wireRequest("server/discover", {});
  	/** Anchor SubscriptionFilter (2026-only). */
@@ -67,9 +154,10 @@ diff --git a/dist/src-DpAS0jfg.cjs b/dist/src-DpAS0jfg.cjs
  		promptsListChanged: zod_v4.boolean().optional(),
  		resourcesListChanged: zod_v4.boolean().optional(),
 diff --git a/dist/src-WCy6ifGf.mjs b/dist/src-WCy6ifGf.mjs
+index 7a40fb418c402ffc6cac3e71192313a79c63be27..51bb65e37ba239a923965c882c5f39893a10ab87 100644
 --- a/dist/src-WCy6ifGf.mjs
 +++ b/dist/src-WCy6ifGf.mjs
-@@ -3062,7 +3062,7 @@
+@@ -3062,7 +3062,7 @@ function build() {
  	const CompleteRequestSchema$1 = wireRequest("completion/complete", completeParamsShape);
  	const DiscoverRequestSchema$1 = wireRequest("server/discover", {});
  	/** Anchor SubscriptionFilter (2026-only). */

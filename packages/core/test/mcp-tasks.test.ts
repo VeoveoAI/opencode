@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test"
-import { isJSONRPCRequest, StreamableHTTPClientTransport, type JSONRPCRequest } from "@modelcontextprotocol/client"
+import {
+  InMemoryTransport,
+  isJSONRPCNotification,
+  isJSONRPCRequest,
+  StreamableHTTPClientTransport,
+  type JSONRPCMessage,
+  type JSONRPCRequest,
+} from "@modelcontextprotocol/client"
 import { Effect, Fiber } from "effect"
 import { TaskClient } from "../src/mcp/task-client"
 import { McpClient } from "../src/mcp/client"
@@ -32,18 +39,29 @@ type Mode =
   | "polling"
   | "unsupported-listen"
   | "pending"
+  | "unacknowledged"
 
 function fixture(mode: Mode = "task", ack: unknown = { taskIds: [baseTask.taskId] }) {
   const requests: Array<JSONRPCRequest & { headers: Headers }> = []
+  const posts: Array<{ message: unknown; headers: Headers }> = []
   const listening = Promise.withResolvers<void>()
   const cancelled = Promise.withResolvers<void>()
   const calling = Promise.withResolvers<void>()
+  const streamClosed = Promise.withResolvers<void>()
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
       if (request.method !== "POST") return new Response(null, { status: 405 })
       const message: unknown = await request.json()
-      if (!isJSONRPCRequest(message)) return new Response(null, { status: 202 })
+      posts.push({ message, headers: request.headers })
+      if (!isJSONRPCRequest(message)) {
+        if (isJSONRPCNotification(message) && !request.headers.has("mcp-method"))
+          return Response.json(
+            { jsonrpc: "2.0", id: null, error: { code: -32020, message: "missing required Mcp-Method header" } },
+            { status: 400 },
+          )
+        return new Response(null, { status: 202 })
+      }
       requests.push({ ...message, headers: request.headers })
       const result = (value: unknown) => Response.json({ jsonrpc: "2.0", id: message.id, result: value })
       if (message.method === "server/discover")
@@ -105,6 +123,9 @@ function fixture(mode: Mode = "task", ack: unknown = { taskIds: [baseTask.taskId
         if (mode === "unsupported-listen")
           return Response.json({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } })
         const stream = new ReadableStream({
+          cancel() {
+            streamClosed.resolve()
+          },
           start(controller) {
             const emit = (method: string, params: object) =>
               controller.enqueue(
@@ -112,13 +133,14 @@ function fixture(mode: Mode = "task", ack: unknown = { taskIds: [baseTask.taskId
                   `data: ${JSON.stringify({ jsonrpc: "2.0", method, params: { ...params, _meta: { "io.modelcontextprotocol/subscriptionId": message.id } } })}\n\n`,
                 ),
               )
-            emit("notifications/subscriptions/acknowledged", { notifications: mode === "polling" ? {} : ack })
+            if (mode !== "unacknowledged")
+              emit("notifications/subscriptions/acknowledged", { notifications: mode === "polling" ? {} : ack })
             listening.resolve()
             if (mode === "closed") {
               emit("notifications/cancelled", { requestId: message.id })
               return
             }
-            if (mode === "waiting" || mode === "polling") return
+            if (mode === "waiting" || mode === "polling" || mode === "unacknowledged") return
             if (mode === "failed") {
               emit("notifications/tasks", {
                 ...baseTask,
@@ -146,9 +168,11 @@ function fixture(mode: Mode = "task", ack: unknown = { taskIds: [baseTask.taskId
   })
   return {
     requests,
+    posts,
     listening: listening.promise,
     cancelled: cancelled.promise,
     calling: calling.promise,
+    streamClosed: streamClosed.promise,
     url: `http://127.0.0.1:${server.port}/mcp`,
     close: () => server.stop(true),
   }
@@ -195,6 +219,19 @@ for (const mode of ["immediate", "task"] as const)
       server.close()
     }
   })
+
+test("modern HTTP Task settlement closes its stream without posting a cancellation notification", async () => {
+  const server = fixture("task")
+  try {
+    const result = await Effect.runPromise(connected(server, (connection) => connection.callTool({ name: "generate" })))
+    expect(result.structured).toEqual({ artifact: "saved" })
+    expect(server.requests.filter((request) => request.method === "tools/call")).toHaveLength(1)
+    expect(server.posts.filter((post) => isJSONRPCNotification(post.message))).toEqual([])
+    await server.streamClosed
+  } finally {
+    server.close()
+  }
+})
 
 for (const [mode, message] of [
   ["failed", "provider refused"],
@@ -260,6 +297,8 @@ test("user interruption sends a bounded remote cancel on an uncancelled request"
     expect(cancel[0].headers.get("mcp-name")).toBe(baseTask.taskId)
     expect(cancel[0].headers.get("mcp-method")).toBe("tasks/cancel")
     expect(server.requests.filter((request) => request.method === "tools/call")).toHaveLength(1)
+    expect(server.posts.filter((post) => isJSONRPCNotification(post.message))).toEqual([])
+    await server.streamClosed
   } finally {
     server.close()
   }
@@ -414,7 +453,76 @@ test("only official Task execution has a hard wall, with bounded remote cancella
     await expect(Effect.runPromise(result)).rejects.toThrow("MCP tool execution timed out after 25ms")
     expect(server.requests.filter((request) => request.method === "tasks/cancel")).toHaveLength(1)
     expect(server.requests.filter((request) => request.method === "tools/call")).toHaveLength(1)
+    expect(server.posts.filter((post) => isJSONRPCNotification(post.message))).toEqual([])
+    await server.streamClosed
   } finally {
+    server.close()
+  }
+})
+
+test("modern subscription close retains cancellation notification on a transport without request streams", async () => {
+  const [transport, peer] = InMemoryTransport.createLinkedPair()
+  const messages: JSONRPCMessage[] = []
+  peer.onmessage = async (message) => {
+    messages.push(message)
+    if (!isJSONRPCRequest(message)) return
+    if (message.method === "server/discover") {
+      await peer.send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { resultType: "complete", supportedVersions: ["2026-07-28"], capabilities: {} },
+      })
+      return
+    }
+    if (message.method === "subscriptions/listen")
+      await peer.send({
+        jsonrpc: "2.0",
+        method: "notifications/subscriptions/acknowledged",
+        params: {
+          notifications: { taskIds: [baseTask.taskId] },
+          _meta: { "io.modelcontextprotocol/subscriptionId": message.id },
+        },
+      })
+  }
+  const client = new TaskClient(
+    { name: "test", version: "1" },
+    { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  )
+  try {
+    await peer.start()
+    await client.connect(transport)
+    const subscription = await client.listenTask(baseTask.taskId, {})
+    expect(subscription).toBeDefined()
+    await subscription?.close()
+    const listen = messages.filter(isJSONRPCRequest).find((message) => message.method === "subscriptions/listen")
+    expect(listen).toBeDefined()
+    const notifications = messages.filter(isJSONRPCNotification)
+    expect(notifications).toHaveLength(1)
+    expect(notifications[0]).toMatchObject({
+      method: "notifications/cancelled",
+      params: { requestId: listen?.id, _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } },
+    })
+  } finally {
+    await client.close()
+    await peer.close()
+  }
+})
+
+test("modern HTTP subscription acknowledgement timeout aborts without a cancellation POST", async () => {
+  const server = fixture("unacknowledged")
+  const client = new TaskClient(
+    { name: "test", version: "1" },
+    { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  )
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.url)))
+    await expect(client.listenTask(baseTask.taskId, { timeout: 10 })).rejects.toThrow(
+      "subscriptions/listen ack timed out",
+    )
+    expect(server.posts.filter((post) => isJSONRPCNotification(post.message))).toEqual([])
+    await server.streamClosed
+  } finally {
+    await client.close()
     server.close()
   }
 })
