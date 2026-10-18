@@ -3,7 +3,8 @@ export * as McpClient from "./client.js"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import {
-  Client,
+  specTypeSchemas,
+  MissingRequiredClientCapabilityError,
   SdkError,
   SdkErrorCode,
   SdkHttpError,
@@ -25,11 +26,24 @@ import {
   type Tool,
   type Transport,
   type VersionNegotiationOptions,
+  type StandardSchemaV1Sync,
 } from "@modelcontextprotocol/client"
 import { Cause, Clock, Duration, Effect, Exit, Schedule, Schema } from "effect"
 import { ConfigMCP } from "@opencode/schema/config/mcp"
 import type { Session } from "@opencode/schema/session"
 import { McpStdio } from "./stdio.js"
+import { TaskClient } from "./task-client.js"
+import { DefaultJsonSchemaValidator } from "@modelcontextprotocol/client/_shims"
+import {
+  DispatchError,
+  createApplicationInputHandler,
+  createTaskSessionFromClient,
+  resultFromTaskOutcome,
+  toolDeclarationFromMcpTool,
+  type ToolExecution,
+} from "@modelcontextprotocol/ext-tasks/client"
+import { hasTaskServerCapabilityV2 } from "@modelcontextprotocol/ext-tasks/core/v2"
+import { toJsonValue } from "@modelcontextprotocol/ext-tasks/core"
 
 const DEFAULT_STARTUP_TIMEOUT = 30_000
 const DEFAULT_CATALOG_TIMEOUT = 30_000
@@ -153,6 +167,7 @@ export const connect = Effect.fnUntraced(function* (
 ) {
   // The SDK takes list-changed handlers at construction, but consumers register after connect. On a
   // modern connection the SDK opens the subscriptions/listen stream behind these itself.
+  const closed = { callback: (_reason: string) => {} }
   const changed = { tools: () => {}, prompts: () => {}, resources: () => {} }
   const listChanged = (key: keyof typeof changed) => ({
     autoRefresh: false,
@@ -163,9 +178,11 @@ export const connect = Effect.fnUntraced(function* (
   // The SDK fails pending requests with a bare "Connection closed"; the transport error before it says why.
   let lastError: string | undefined
   const explain = (error: unknown) =>
-    error instanceof SdkError && error.code === SdkErrorCode.ConnectionClosed && lastError
-      ? `${describe(error)}: ${lastError}`
-      : describe(error)
+    error instanceof DispatchError && error.cause instanceof Error
+      ? `${describe(error)}: ${describe(error.cause)}`
+      : error instanceof SdkError && error.code === SdkErrorCode.ConnectionClosed && lastError
+        ? `${describe(error)}: ${lastError}`
+        : describe(error)
 
   // Two more attempts, 250 ms and 1 s later, while the failure is transient and the deadline has not passed.
   const retrying = <A, E>(what: string, effect: Effect.Effect<A, E>, deadline = Infinity) =>
@@ -181,15 +198,15 @@ export const connect = Effect.fnUntraced(function* (
       ),
     )
 
+  const capabilities = {
+    ...(elicitation ? { elicitation: { form: {}, url: {} } } : {}),
+    // Legacy roots remain supported on the ordinary client, but no sampling is advertised.
+    roots: {},
+  }
   const initialize = Effect.fnUntraced(function* (transport: Transport) {
     const runFork = Effect.runForkWith(yield* Effect.context())
-    const client = new Client(clientInfo, {
-      capabilities: {
-        ...(elicitation ? { elicitation: { form: {}, url: {} } } : {}),
-        // Legacy era only: roots are deprecated as of 2026-07-28 and modern servers cannot request them.
-        // Some legacy servers refuse to run without one (https://github.com/anomalyco/opencode/issues/2308).
-        roots: {},
-      },
+    const client = new TaskClient(clientInfo, {
+      capabilities,
       versionNegotiation: negotiation(config.protocol),
       listChanged: {
         tools: listChanged("tools"),
@@ -197,6 +214,7 @@ export const connect = Effect.fnUntraced(function* (
         resources: listChanged("resources"),
       },
     })
+    client.onclose = () => closed.callback(lastError ? `Connection closed: ${lastError}` : "Connection closed")
     // Background work such as the standalone SSE stream reports failures only here; aborts come from close.
     client.onerror = (error) => {
       if (error.name === "AbortError") return
@@ -229,13 +247,14 @@ export const connect = Effect.fnUntraced(function* (
     reported: false,
   }
   const failure = (error: unknown) => {
-    if (!(error instanceof SdkHttpError) || session.transport?.sessionId === undefined) return new Error(explain(error))
+    if (!(error instanceof SdkHttpError) || session.transport?.sessionId === undefined)
+      return new Error(explain(error), { cause: error })
     const expired =
       error.status === 404 ||
       (error.status === 400 &&
         typeof error.data.text === "string" &&
         error.data.text.includes("Bad Request: Server not initialized"))
-    if (!expired) return new Error(explain(error))
+    if (!expired) return new Error(explain(error), { cause: error })
     if (!session.reported) {
       session.reported = true
       session.expired?.()
@@ -265,8 +284,7 @@ export const connect = Effect.fnUntraced(function* (
     // Servers that bundle their own Code Mode (Cloudflare and others) expose raw tools when asked
     // with ?codemode=false, which is what our Code Mode wants. The configured URL stays the OAuth identity.
     const url = new URL(config.url)
-    const addedCodemode =
-      config.codemode !== false && !url.searchParams.has("codemode") && !rejectsUnknownQuery(url)
+    const addedCodemode = config.codemode !== false && !url.searchParams.has("codemode") && !rejectsUnknownQuery(url)
     if (addedCodemode) url.searchParams.set("codemode", "false")
     const open = Effect.fnUntraced(function* (url: URL) {
       session.transport = new StreamableHTTPClientTransport(url, {
@@ -294,6 +312,39 @@ export const connect = Effect.fnUntraced(function* (
   }).pipe(Effect.exit)
   if (Exit.isSuccess(exit)) {
     const client = exit.value
+    const tasks =
+      client.getProtocolEra() === "modern" && hasTaskServerCapabilityV2(client.getServerCapabilities())
+        ? createTaskSessionFromClient(client, {
+            endpointId: server,
+            rawDispatch: client.dispatch,
+            v2RequestFraming: {
+              protocolVersion: client.getNegotiatedProtocolVersion()!,
+              clientInfo: Object.fromEntries(
+                Object.entries(clientInfo)
+                  .filter(([, value]) => value !== undefined)
+                  .map(([key, value]) => [key, toJsonValue(value)]),
+              ),
+              clientCapabilities: capabilities,
+            },
+            tools: { currentTool: () => undefined },
+            onInputRequest: createApplicationInputHandler({
+              elicitation: async (input, context) => {
+                if (!elicitation) throw new Error("MCP elicitation is unavailable")
+                return Effect.runPromise(
+                  elicitation.create({
+                    server,
+                    params: decode(specTypeSchemas.ElicitRequestParams, input.params),
+                    signal: context.signal ?? new AbortController().signal,
+                  }),
+                )
+              },
+              roots: () => ({ roots: [{ uri: pathToFileURL(directory).href }] }),
+              sampling: () => {
+                throw new Error("MCP sampling is not supported")
+              },
+            }),
+          })
+        : undefined
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         // Close only aborts streams; the legacy session lives on until the server expires it unless
@@ -312,6 +363,7 @@ export const connect = Effect.fnUntraced(function* (
             ),
             Effect.ignore,
           )
+        if (tasks) yield* Effect.tryPromise(() => tasks.close()).pipe(Effect.ignore)
         yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
       }),
     )
@@ -366,20 +418,107 @@ export const connect = Effect.fnUntraced(function* (
         request("get MCP prompt", (signal) =>
           client.getPrompt({ name: input.name, arguments: input.args ?? {} }, { signal, timeout: execution }),
         ),
-      callTool: (input) =>
-        request("call MCP tool", (signal) =>
-          client.callTool(
-            {
-              name: input.name,
-              arguments: input.args ?? {},
-              ...(input.sessionID === undefined ? {} : { _meta: { "ai.opencode/sessionID": input.sessionID } }),
-            },
-            // Requesting progress keeps long calls alive under the SDK's timeout; execution is the hard wall.
-            { signal, timeout: execution, onprogress: () => {} },
+      callTool: (input) => {
+        const active: { execution?: ToolExecution<unknown> } = {}
+        return request("call MCP tool", async (signal) => {
+          const params = {
+            name: input.name,
+            arguments: input.args ?? {},
+            ...(input.sessionID === undefined ? {} : { _meta: { "ai.opencode/sessionID": input.sessionID } }),
+          }
+          if (!tasks) return client.callTool(params, { signal, timeout: execution, onprogress: () => {} })
+          const tool = (await client.listTools(undefined, { ...catalog, signal })).tools.find(
+            (tool) => tool.name === input.name,
+          )
+          if (!tool) throw new Error(`MCP tool is not listed: ${input.name}`)
+          // The upstream SDK owns Mcp-Param-* projection; its callTool API cannot yet return Tasks.
+          // Select that ordinary path before dispatch, never retry a mutation through another path.
+          if (hasHeaderAnnotation(tool.inputSchema)) {
+            return client
+              .callTool(params, { signal, timeout: execution, onprogress: () => {}, toolDefinition: tool })
+              .catch((error: unknown) => {
+                if (
+                  error instanceof MissingRequiredClientCapabilityError &&
+                  hasTaskServerCapabilityV2(error.requiredCapabilities)
+                )
+                  error.message += "; upstream MCP SDK cannot combine x-mcp-header projection with Task execution"
+                throw error
+              })
+          }
+          const deadline = new AbortController()
+          const timer = setTimeout(
+            () => deadline.abort(new Error(`MCP tool execution timed out after ${execution}ms`)),
+            execution,
+          )
+          const taskSignal = AbortSignal.any([signal, deadline.signal])
+          try {
+            const validator = tool.outputSchema
+              ? new DefaultJsonSchemaValidator().getValidator(tool.outputSchema)
+              : undefined
+            const args = Object.fromEntries(
+              Object.entries(input.args ?? {}).map(([key, value]) => [key, toJsonValue(value)]),
+            )
+            const operation = await tasks.callTool(input.name, args, {
+              declaration: toolDeclarationFromMcpTool(tool),
+              metadata: params._meta,
+              signal: taskSignal,
+              requestTimeoutMs: execution,
+            })
+            active.execution = operation
+            const subscription =
+              operation.kind === "task"
+                ? await client.listenTask(operation.handle.taskId, { signal: taskSignal, timeout: catalog.timeout })
+                : undefined
+            try {
+              const settling = operation.settle({ signal: taskSignal })
+              const settled = await (subscription
+                ? Promise.race([
+                    settling,
+                    subscription.closed.then(() => {
+                      throw new Error(`MCP Task subscription closed before completion: ${operation.handle?.taskId}`)
+                    }),
+                  ])
+                : settling)
+              const result = decode(specTypeSchemas.CallToolResult, resultFromTaskOutcome(settled.outcome))
+              if (validator && !result.isError) {
+                if (result.structuredContent === undefined)
+                  throw new Error(
+                    `MCP tool ${input.name} did not return structured content required by its output schema`,
+                  )
+                const validation = validator(result.structuredContent)
+                if (!validation.valid)
+                  throw new Error(`MCP tool output does not match its schema: ${validation.errorMessage}`)
+              }
+              return { ...result, content: result.content ?? [] }
+            } finally {
+              await subscription?.close()
+            }
+          } catch (error) {
+            if (deadline.signal.aborted) {
+              if (active.execution?.kind === "task")
+                await active.execution.cancel(AbortSignal.timeout(5_000)).catch(() => {})
+              throw deadline.signal.reason
+            }
+            throw error
+          } finally {
+            clearTimeout(timer)
+          }
+        }).pipe(
+          Effect.onInterrupt(() =>
+            Effect.promise(async () => {
+              if (active.execution?.kind === "task") await active.execution.cancel(AbortSignal.timeout(5_000))
+            }).pipe(Effect.ignore),
           ),
-        ).pipe(Effect.map(toCallToolResult)),
+          Effect.ensuring(
+            Effect.promise(async () => {
+              await active.execution?.close()
+            }).pipe(Effect.ignore),
+          ),
+          Effect.map(toCallToolResult),
+        )
+      },
       onClose: (callback) => {
-        client.onclose = () => callback(lastError ? `Connection closed: ${lastError}` : "Connection closed")
+        closed.callback = callback
       },
       onSessionExpired: (callback) => {
         session.expired = callback
@@ -443,4 +582,44 @@ function toCallToolResult(result: SdkCallToolResult): CallToolResult {
       return []
     }),
   }
+}
+
+// Match only JSON Schema subschema positions inspected by the pinned upstream header scanner.
+function hasHeaderAnnotation(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const schema = value as Record<string, unknown>
+  if ("x-mcp-header" in schema) return true
+  const maps = ["properties", "patternProperties", "dependentSchemas", "$defs", "definitions"]
+  if (
+    maps.some((key) => {
+      const entries = schema[key]
+      return entries && typeof entries === "object" && Object.values(entries).some(hasHeaderAnnotation)
+    })
+  )
+    return true
+  return [
+    "items",
+    "prefixItems",
+    "contains",
+    "additionalProperties",
+    "unevaluatedProperties",
+    "unevaluatedItems",
+    "propertyNames",
+    "oneOf",
+    "anyOf",
+    "allOf",
+    "not",
+    "if",
+    "then",
+    "else",
+  ].some((key) => {
+    const entry = schema[key]
+    return Array.isArray(entry) ? entry.some(hasHeaderAnnotation) : hasHeaderAnnotation(entry)
+  })
+}
+
+function decode<T>(schema: StandardSchemaV1Sync<T>, value: unknown): T {
+  const parsed = schema["~standard"].validate(value)
+  if (parsed.issues) throw new Error(`Invalid MCP result: ${parsed.issues.map((issue) => issue.message).join(", ")}`)
+  return parsed.value
 }

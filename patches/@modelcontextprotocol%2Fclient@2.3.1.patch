@@ -1,0 +1,80 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -1038,7 +1038,6 @@
+ 	else {
+ 		const wellKnownPath = buildWellKnownPath(wellKnownType, issuer.pathname);
+ 		url = new URL(wellKnownPath, opts?.metadataServerUrl ?? issuer);
+-		url.search = issuer.search;
+ 	}
+ 	let response = await tryMetadataDiscovery(url, protocolVersion, fetchFn);
+ 	if (!opts?.metadataUrl && shouldAttemptFallback(response, issuer.pathname)) response = await tryMetadataDiscovery(new URL(`/.well-known/${wellKnownType}`, issuer), protocolVersion, fetchFn);
+@@ -1222,7 +1221,6 @@
+ 	authorizationUrl.searchParams.set("redirect_uri", String(redirectUrl));
+ 	if (state) authorizationUrl.searchParams.set("state", state);
+ 	if (scope) authorizationUrl.searchParams.set("scope", scope);
+-	if (scope?.split(" ").includes("offline_access")) authorizationUrl.searchParams.append("prompt", "consent");
+ 	if (resource) authorizationUrl.searchParams.set("resource", resourceIndicatorToString(resource));
+ 	return {
+ 		authorizationUrl,
+@@ -4120,7 +4118,7 @@
+ 			const entry = typeof subscriptionId === "string" ? this._listenState.get(subscriptionId) : void 0;
+ 			if (entry !== void 0) {
+ 				const honored = this._wireCodec().validateNotification("notifications/subscriptions/acknowledged", raw);
+-				entry.settle({ ack: honored.ok ? honored.value.params.notifications : {} });
++				entry.settle(honored.ok ? { ack: honored.value.params.notifications } : { cause: "remote", error: new require_src.SdkError(require_src.SdkErrorCode.InvalidResult, "Invalid subscriptions/listen acknowledgement", { method: "subscriptions/listen" }) });
+ 				return;
+ 			}
+ 		}
+diff --git a/dist/index.mjs b/dist/index.mjs
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1035,7 +1035,6 @@
+ 	else {
+ 		const wellKnownPath = buildWellKnownPath(wellKnownType, issuer.pathname);
+ 		url = new URL(wellKnownPath, opts?.metadataServerUrl ?? issuer);
+-		url.search = issuer.search;
+ 	}
+ 	let response = await tryMetadataDiscovery(url, protocolVersion, fetchFn);
+ 	if (!opts?.metadataUrl && shouldAttemptFallback(response, issuer.pathname)) response = await tryMetadataDiscovery(new URL(`/.well-known/${wellKnownType}`, issuer), protocolVersion, fetchFn);
+@@ -1219,7 +1218,6 @@
+ 	authorizationUrl.searchParams.set("redirect_uri", String(redirectUrl));
+ 	if (state) authorizationUrl.searchParams.set("state", state);
+ 	if (scope) authorizationUrl.searchParams.set("scope", scope);
+-	if (scope?.split(" ").includes("offline_access")) authorizationUrl.searchParams.append("prompt", "consent");
+ 	if (resource) authorizationUrl.searchParams.set("resource", resourceIndicatorToString(resource));
+ 	return {
+ 		authorizationUrl,
+@@ -4117,7 +4115,7 @@
+ 			const entry = typeof subscriptionId === "string" ? this._listenState.get(subscriptionId) : void 0;
+ 			if (entry !== void 0) {
+ 				const honored = this._wireCodec().validateNotification("notifications/subscriptions/acknowledged", raw);
+-				entry.settle({ ack: honored.ok ? honored.value.params.notifications : {} });
++				entry.settle(honored.ok ? { ack: honored.value.params.notifications } : { cause: "remote", error: new SdkError(SdkErrorCode.InvalidResult, "Invalid subscriptions/listen acknowledgement", { method: "subscriptions/listen" }) });
+ 				return;
+ 			}
+ 		}
+diff --git a/dist/src-DpAS0jfg.cjs b/dist/src-DpAS0jfg.cjs
+--- a/dist/src-DpAS0jfg.cjs
++++ b/dist/src-DpAS0jfg.cjs
+@@ -3063,7 +3063,7 @@
+ 	const CompleteRequestSchema$1 = wireRequest("completion/complete", completeParamsShape);
+ 	const DiscoverRequestSchema$1 = wireRequest("server/discover", {});
+ 	/** Anchor SubscriptionFilter (2026-only). */
+-	const SubscriptionFilterSchema$1 = zod_v4.object({
++	const SubscriptionFilterSchema$1 = zod_v4.looseObject({
+ 		toolsListChanged: zod_v4.boolean().optional(),
+ 		promptsListChanged: zod_v4.boolean().optional(),
+ 		resourcesListChanged: zod_v4.boolean().optional(),
+diff --git a/dist/src-WCy6ifGf.mjs b/dist/src-WCy6ifGf.mjs
+--- a/dist/src-WCy6ifGf.mjs
++++ b/dist/src-WCy6ifGf.mjs
+@@ -3062,7 +3062,7 @@
+ 	const CompleteRequestSchema$1 = wireRequest("completion/complete", completeParamsShape);
+ 	const DiscoverRequestSchema$1 = wireRequest("server/discover", {});
+ 	/** Anchor SubscriptionFilter (2026-only). */
+-	const SubscriptionFilterSchema$1 = z.object({
++	const SubscriptionFilterSchema$1 = z.looseObject({
+ 		toolsListChanged: z.boolean().optional(),
+ 		promptsListChanged: z.boolean().optional(),
+ 		resourcesListChanged: z.boolean().optional(),
