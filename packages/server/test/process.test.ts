@@ -259,3 +259,64 @@ it.live("server info lists remote URLs alongside local addresses while they are 
     expect((yield* info()).urls).toEqual([base])
   }),
 )
+
+it.live("trusted local proxy serves the native API without credentials, pairing or URL publication", () =>
+  Effect.gen(function* () {
+    const server = yield* ServerProcess.start<never, never>(
+      {
+        hostname: "127.0.0.1",
+        port: 0,
+        trustedLocalProxy: true,
+        basePath: "/computer/c/private-id/",
+        database: { path: ":memory:" },
+        models: { fetch: false },
+      },
+      undefined,
+      undefined,
+      () => ["https://must-not-be-published.example"],
+    )
+    const base = HttpServer.formatAddress(server.address)
+    const info = yield* Effect.promise(() => fetch(new URL("/api/info", base)))
+    expect(info.status).toBe(200)
+    expect(info.headers.get("www-authenticate")).toBeNull()
+    expect(yield* Effect.promise(() => info.json())).toMatchObject({ urls: [] })
+    const pair = yield* Effect.promise(() => fetch(new URL("/api/pair", base), { method: "POST" }))
+    expect(pair.status).toBe(401)
+    expect(yield* Effect.promise(() => pair.text())).toContain("Pairing is unavailable")
+    const connect = yield* Effect.promise(() =>
+      fetch(new URL("/auth/connect/unused", base), {
+        redirect: "manual",
+        headers: { accept: "text/html" },
+      }),
+    )
+    expect(connect.status).toBe(401)
+    expect(connect.headers.get("set-cookie")).toBeNull()
+    yield* Effect.promise(() => connect.arrayBuffer())
+    const events = yield* Effect.promise(() => fetch(new URL("/api/event", base)))
+    expect(events.status).toBe(200)
+    expect(events.headers.get("content-type")).toContain("text/event-stream")
+    yield* Effect.promise(() => events.body?.cancel() ?? Promise.resolve())
+  }),
+)
+
+it.live("native process refuses unsafe proxy configurations and keeps ordinary password admission", () =>
+  Effect.gen(function* () {
+    for (const options of [
+      { trustedLocalProxy: true, hostname: "0.0.0.0" },
+      { trustedLocalProxy: true, hostname: "localhost" },
+      { trustedLocalProxy: true, hostname: "127.0.0.1", password: "secret" },
+      { trustedLocalProxy: true, hostname: "127.0.0.1", password: "" },
+      { hostname: "127.0.0.1" },
+    ]) {
+      const result = yield* ServerProcess.start<never, never>({ ...options, port: 0 }).pipe(Effect.result)
+      expect(result._tag).toBe("Failure")
+    }
+    const result = yield* ServerProcess.start(
+      { hostname: "127.0.0.1", port: 0, trustedLocalProxy: true },
+      {
+        onListen: () => Effect.succeed(Effect.void),
+      },
+    ).pipe(Effect.result)
+    expect(result._tag).toBe("Failure")
+  }),
+)

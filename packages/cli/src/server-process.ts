@@ -1,5 +1,7 @@
 export * as ServerProcess from "./server-process"
 
+import { BasePath } from "@opencode/util/base-path"
+
 import { NodeServices } from "@effect/platform-node"
 import { Service } from "@opencode/client/effect/service"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -24,6 +26,8 @@ export type Mode = "default" | "service" | "stdio"
 
 export type Options = {
   readonly mode: Mode
+  readonly trustedLocalProxy?: boolean
+  readonly basePath?: string
   readonly hostname?: string
   readonly port?: number
   readonly cors?: readonly string[]
@@ -46,6 +50,13 @@ export const run = Effect.fnUntraced(function* (options: Options) {
 })
 
 const processEffect = Effect.fnUntraced(function* (options: Options) {
+  const environmentPassword = yield* Env.password
+  // Reject unsafe proxy requests before service discovery or process mutation.
+  const proxyAuthentication = options.trustedLocalProxy
+    ? yield* Effect.try(() =>
+        authentication({ ...options, hostname: options.hostname ?? "127.0.0.1" }, environmentPassword),
+      )
+    : undefined
   const inherited = process.env.OPENCODE_PTY_HANDOFF
   delete process.env.OPENCODE_PTY_HANDOFF
   const handoff =
@@ -82,21 +93,21 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       if (options.mode === "service" && process.platform === "win32" && RetainedImage.installed(global.home))
         yield* RetainedImage.retain(global.cache, "service")
       const { start } = yield* Effect.promise(() => import("@opencode/server/process"))
-      const environmentPassword = yield* Env.password
       // Keep the lease credential out of the environment inherited by tools.
       if (options.mode === "stdio") {
         delete process.env.OPENCODE_PASSWORD
         delete process.env.OPENCODE_SERVER_PASSWORD
       }
-      const password =
-        options.mode === "service"
-          ? config.password || randomBytes(32).toString("base64url")
-          : environmentPassword
-            ? Redacted.value(environmentPassword)
-            : randomBytes(32).toString("base64url")
-      if (!password) return yield* Effect.fail(new Error("Missing server password"))
+      const auth =
+        proxyAuthentication ??
+        (yield* Effect.try(() => authentication({ ...options, hostname }, environmentPassword, config.password)))
+      const password = auth.mode === "password" ? auth.password : undefined
       const instanceID = randomUUID()
-      const transform = yield* WebUi.handler()
+      const basePath = BasePath.normalize(options.basePath ?? (yield* Env.basePath))
+      const transform = yield* WebUi.handler({
+        basePath,
+        cache: auth.mode === "trusted-local-proxy" ? "online-only" : "offline",
+      })
       const remote = { urls: [] as ReadonlyArray<string> }
       const launch = start(
         {
@@ -107,10 +118,12 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           },
           hostname,
           port,
+          basePath,
           cors: options.cors ?? config.cors,
           password,
           // Service and stdio clients authenticate with the default username, so only a manually run server adopts it.
           username: options.mode === "default" ? yield* Env.username : undefined,
+          trustedLocalProxy: auth.mode === "trusted-local-proxy",
           pty: { handoff },
           simulation: truthy(process.env.OPENCODE_SIMULATE),
           database: {
@@ -145,15 +158,15 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
                 : !truthy(process.env.OPENCODE_DISABLE_FFF),
           },
         },
-        serviceOptions === undefined
+        serviceOptions === undefined || auth.mode !== "password"
           ? undefined
           : {
               onListen: (address, shutdown) =>
                 Effect.gen(function* () {
-                  if (!config.password) yield* ServiceConfig.password(password)
+                  if (!config.password) yield* ServiceConfig.password(auth.password)
                   return yield* ServiceRegistration.register({
                     address,
-                    password,
+                    password: auth.password,
                     id: instanceID,
                     file: serviceOptions.file,
                     shutdown,
@@ -208,7 +221,8 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       }
       const url = HttpServer.formatAddress(server.address)
       console.log(options.mode === "stdio" ? JSON.stringify({ url }) : `server listening on ${url}`)
-      if (foreground && !environmentPassword) console.log(`server password ${password}`)
+      if (foreground && auth.mode === "password" && !environmentPassword)
+        console.log(`server password ${auth.password}`)
       return yield* options.mode === "service"
         ? server.shutdown
         : options.mode === "stdio"
@@ -217,6 +231,35 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
     }).pipe(Effect.annotateLogs({ role: "server" })),
   )
 })
+
+export type Authentication =
+  | { readonly mode: "password"; readonly password: string }
+  | { readonly mode: "trusted-local-proxy" }
+
+export function authentication(
+  options: Options & { readonly hostname: string },
+  environmentPassword?: Redacted.Redacted<string>,
+  servicePassword?: string,
+): Authentication {
+  if (options.trustedLocalProxy) {
+    if (options.mode !== "default")
+      throw new Error("--trusted-local-proxy requires foreground serve (no --service or --stdio)")
+    if (options.hostname !== "127.0.0.1" && options.hostname !== "::1")
+      throw new Error("--trusted-local-proxy requires literal loopback hostname 127.0.0.1 or ::1")
+    if (environmentPassword !== undefined || servicePassword !== undefined)
+      throw new Error("--trusted-local-proxy cannot be combined with server password configuration")
+    return { mode: "trusted-local-proxy" }
+  }
+  return {
+    mode: "password",
+    password:
+      options.mode === "service"
+        ? servicePassword || randomBytes(32).toString("base64url")
+        : environmentPassword
+          ? Redacted.value(environmentPassword)
+          : randomBytes(32).toString("base64url"),
+  }
+}
 
 function serviceURL(hostname: string, port: number) {
   return `http://${hostname.includes(":") ? `[${hostname}]` : hostname}:${port}`

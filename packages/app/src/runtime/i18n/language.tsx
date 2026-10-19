@@ -1,3 +1,4 @@
+import { BrowserStorage } from "@opencode/util/browser-storage"
 import { createEffect, createMemo, createResource, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Option, Schema, SchemaGetter } from "effect"
@@ -208,7 +209,7 @@ function readStoredLocale() {
   if (typeof localStorage !== "object") return
 
   try {
-    const raw = localStorage.getItem("opencode.global.dat:language")
+    const raw = localStorage.getItem(BrowserStorage.namespace().key("opencode.global.dat:language"))
 
     if (!raw) return
     const next = Schema.decodeUnknownOption(Schema.fromJsonString(StoredLocaleSchema))(raw)

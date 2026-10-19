@@ -52,8 +52,15 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
   remoteURLs?: () => ReadonlyArray<string>,
 ) {
   const password = options.password
-  if (!password) return yield* Effect.fail(new Error("Missing server password"))
   const hostname = options.hostname ?? "127.0.0.1"
+  if (options.trustedLocalProxy) {
+    if (hostname !== "127.0.0.1" && hostname !== "::1")
+      return yield* Effect.fail(new Error("Trusted local proxy requires literal loopback hostname 127.0.0.1 or ::1"))
+    if (password !== undefined || lifecycle !== undefined)
+      return yield* Effect.fail(
+        new Error("Trusted local proxy cannot use password configuration or managed service lifecycle"),
+      )
+  } else if (!password) return yield* Effect.fail(new Error("Missing server password"))
   const port = Option.fromNullishOr(options.port)
   const shutdown = yield* Latch.make()
   const status = yield* Status.make()
@@ -64,10 +71,10 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
     const host = address.family === "IPv6" ? `[${address.address}]` : address.address
     return ServerInfo.connectionURLs(`http://${host}:${address.port}`, hostname)
   }
-  const urls = () => [...localURLs(), ...(remoteURLs?.() ?? [])]
+  const urls = () => (options.trustedLocalProxy ? [] : [...localURLs(), ...(remoteURLs?.() ?? [])])
   const application = yield* Ref.make(Option.none<App>())
   const auth = ServerAuth.Config.of({
-    password: Option.some(password),
+    password: Option.fromNullishOr(password),
     username: options.username ?? ServerAuth.DEFAULT_USERNAME,
   })
   const app = dispatch(auth, status, application, options.app?.version ?? "unknown", urls, Global.Path.tmp)
@@ -190,10 +197,11 @@ function dispatch(
     const app = yield* Ref.get(application)
     const ready = state.type === "ready" && Option.isSome(app)
     if (request.method === "GET" && url.pathname === "/api/info" && !ready) {
-      if (!(yield* authorizedRequest(request, auth))) return unauthorizedResponse(request)
+      if (ServerAuth.required(auth) && !(yield* authorizedRequest(request, auth))) return unauthorizedResponse(request)
       return yield* infoResponse(status, version, urls, tmp)
     }
     if (
+      ServerAuth.required(auth) &&
       !isPairingConnectURL(url) &&
       (!ready ||
         (!hasPtyConnectTicketURL(url) && !hasPersistentPtyConnectTicketURL(url) && !hasMcpClientTicketURL(url))) &&

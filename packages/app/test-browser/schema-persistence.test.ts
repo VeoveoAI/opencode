@@ -1,9 +1,10 @@
+import { BrowserStorage } from "@opencode/util/browser-storage"
 import { describe, expect, test } from "bun:test"
 import { Schema, SchemaGetter } from "effect"
 import { createComputed, createRoot } from "solid-js"
 import type { Platform } from "@/runtime/platform/platform"
 import { flushPersisted } from "@/runtime/persistence/persist"
-import { Persist, persisted } from "@/runtime/persistence/storage"
+import { Persist, persisted, removePersisted } from "@/runtime/persistence/storage"
 import { Persistence } from "@/runtime/persistence/schema"
 import { TabStorage } from "@/shell/tabs/schema"
 
@@ -282,4 +283,85 @@ describe("schema-backed persistence", () => {
       root.dispose()
     }
   })
+})
+
+test("mounted relocation and removal never read or erase another mount or root", () => {
+  const base = document.createElement("base")
+  base.setAttribute("href", "/mount/relocation/")
+  document.head.append(base)
+  const namespace = BrowserStorage.namespace()
+  const target = {
+    ...Persist.global(`mount-copy-${crypto.randomUUID()}`),
+    previousKey: "mount-previous",
+    copyFrom: [{ key: "mount-copy" }],
+  }
+  const root = JSON.stringify({ enabled: true, label: "root" })
+  localStorage.setItem("mount-previous", root)
+  localStorage.setItem("mount-copy", root)
+  localStorage.setItem(namespace.key("mount-copy"), JSON.stringify({ enabled: true, label: "own" }))
+  createRoot((dispose) => {
+    try {
+      const [state] = persisted(target, Current, initial, web)
+      expect(state.label).toBe("own")
+      localStorage.setItem(namespace.key("mount-previous"), JSON.stringify({ enabled: true, label: "stale" }))
+      removePersisted(target, web)
+      expect(localStorage.getItem(namespace.key(`${target.storage}:${target.key}`))).toBeNull()
+      expect(localStorage.getItem(namespace.key("mount-previous"))).toBeNull()
+      expect(localStorage.getItem(namespace.key("mount-copy"))).toBeNull()
+      expect(localStorage.getItem("mount-previous")).toBe(root)
+      expect(localStorage.getItem("mount-copy")).toBe(root)
+    } finally {
+      dispose()
+      base.remove()
+      localStorage.removeItem("mount-previous")
+      localStorage.removeItem("mount-copy")
+    }
+  })
+})
+
+test("quota eviction is confined to the current mount, including root", () => {
+  for (const mount of ["/", "/mount/eviction/"]) {
+    const base = document.createElement("base")
+    base.setAttribute("href", mount)
+    document.head.append(base)
+    const namespace = BrowserStorage.namespace()
+    const target = { storage: `opencode.eviction.${crypto.randomUUID()}`, key: "value" }
+    const key = namespace.key(`${target.storage}:${target.key}`)
+    const old = namespace.key("opencode.workspace.evict-me.dat:value")
+    const foreign = BrowserStorage.namespace("/mount/foreign/").key("opencode.global.dat:foreign")
+    const values = new Map([
+      [old, "own"],
+      [foreign, "foreign".repeat(1000)],
+    ])
+    if (mount !== "/") values.set("opencode.global.dat:root", "root".repeat(1000))
+    const storage = {
+      get length() {
+        return values.size
+      },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      getItem: (key: string) => values.get(key) ?? null,
+      removeItem: (key: string) => void values.delete(key),
+      setItem: (name: string, value: string) => {
+        if (name === key && values.has(old)) throw new DOMException("fixture quota", "QuotaExceededError")
+        values.set(name, value)
+      },
+    }
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage")!
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true })
+    createRoot((dispose) => {
+      try {
+        const [, setState] = persisted(target, Current, initial, web)
+        setState("label", "saved")
+        flushPersisted()
+        expect(values.has(old)).toBe(false)
+        expect(JSON.parse(values.get(key)!)).toMatchObject({ label: "saved" })
+        expect(values.get(foreign)).toBe("foreign".repeat(1000))
+        if (mount !== "/") expect(values.get("opencode.global.dat:root")).toBe("root".repeat(1000))
+      } finally {
+        dispose()
+        Object.defineProperty(globalThis, "localStorage", original)
+        base.remove()
+      }
+    })
+  }
 })

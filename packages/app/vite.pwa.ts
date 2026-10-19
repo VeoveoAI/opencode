@@ -27,9 +27,9 @@ export function serviceWorker(directory: string) {
       // Keep each open tab on its complete build until all old clients close.
       skipWaiting: false,
       inlineWorkboxRuntime: true,
-      navigateFallback: "/index.html",
+      navigateFallback: "index.html",
       // Pairing links must reach the server so it can set the session cookie.
-      navigateFallbackDenylist: [/^\/(?:api|auth)(?:\/|$)/, /^\/(?:_assets|assets)(?:\/|$)/],
+      navigateFallbackDenylist: [/\/(?:api|auth)(?:\/|$)/, /\/(?:_assets|assets)(?:\/|$)/],
       // Include lazy chunks and non-JS dependencies, not just the startup bundle.
       globPatterns: ["**/*"],
       globIgnores: ["**/*.map", "_headers", "_redirects"],
@@ -40,13 +40,13 @@ export function serviceWorker(directory: string) {
             entries
               .filter((entry) => !onDemandAsset(entry.url))
               .map(async (entry) => ({
-              ...entry,
-              // A revision labels a cache entry; integrity rejects mixed deployments
-              // and HTML fallback responses instead of installing a broken build.
-              integrity: `sha256-${createHash("sha256")
-                .update(await readFile(resolve(directory, entry.url)))
-                .digest("base64")}`,
-            })),
+                ...entry,
+                // A revision labels a cache entry; integrity rejects mixed deployments
+                // and HTML fallback responses instead of installing a broken build.
+                integrity: `sha256-${createHash("sha256")
+                  .update(await readFile(resolve(directory, entry.url)))
+                  .digest("base64")}`,
+              })),
           ),
           warnings: [],
         }),

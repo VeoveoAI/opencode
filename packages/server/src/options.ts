@@ -15,6 +15,10 @@ export const ServerOptions = Schema.Struct({
   port: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(65_535))),
   password: Schema.optional(Schema.String),
   username: Schema.optional(Schema.String),
+  // Explicit foreground process mode; its authenticated proxy owns admission.
+  trustedLocalProxy: Schema.optional(Schema.Boolean),
+  // External mount only; protocol routes remain rooted behind the gateway.
+  basePath: Schema.optional(Schema.String),
   cors: Schema.optional(Schema.Array(Schema.String)),
   simulation: Schema.optional(Schema.Boolean),
   database: Schema.optional(Database.Options),

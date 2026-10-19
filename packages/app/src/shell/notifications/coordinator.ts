@@ -1,3 +1,4 @@
+import { BrowserStorage } from "@opencode/util/browser-storage"
 import { onCleanup } from "solid-js"
 
 const FOCUS_LOCK = "opencode:notification-focus"
@@ -5,6 +6,7 @@ const FOCUS_LOCK = "opencode:notification-focus"
 const MAX_CLAIMED = 500
 
 export function createNotificationCoordinator() {
+  const namespace = BrowserStorage.namespace()
   const locks = typeof navigator === "undefined" ? undefined : navigator.locks
   const claimed = new Set<string>()
   const focus = { pending: false, release: undefined as (() => void) | undefined }
@@ -20,7 +22,7 @@ export function createNotificationCoordinator() {
 
     focus.pending = true
     void locks
-      .request(FOCUS_LOCK, { mode: "shared" }, async () => {
+      .request(namespace.key(FOCUS_LOCK), { mode: "shared" }, async () => {
         focus.pending = false
 
         if (!document.hasFocus()) return
@@ -51,12 +53,12 @@ export function createNotificationCoordinator() {
     const key = `${kind}:${eventID}`
 
     const execute = async () => {
-      if (!claim(kind, key, claimed)) return
+      if (!claim(kind, key, claimed, namespace)) return
       await run()
     }
 
     if (!locks) return execute()
-    await locks.request(`opencode:notification:${key}`, execute)
+    await locks.request(namespace.key(`opencode:notification:${key}`), execute)
   }
 
   return {
@@ -68,7 +70,7 @@ export function createNotificationCoordinator() {
         if (typeof document !== "undefined" && document.hasFocus()) return
 
         if (!locks) return run()
-        await locks.request(FOCUS_LOCK, { mode: "exclusive", ifAvailable: true }, async (lock) => {
+        await locks.request(namespace.key(FOCUS_LOCK), { mode: "exclusive", ifAvailable: true }, async (lock) => {
           if (!lock) return
           await run()
         })
@@ -77,12 +79,17 @@ export function createNotificationCoordinator() {
   }
 }
 
-function claim(kind: "sound" | "system", eventID: string, claimed: Set<string>) {
+function claim(
+  kind: "sound" | "system",
+  eventID: string,
+  claimed: Set<string>,
+  namespace: ReturnType<typeof BrowserStorage.namespace>,
+) {
   if (claimed.has(eventID)) return false
 
   if (typeof localStorage !== "undefined") {
     try {
-      const storageKey = `opencode:notification-${kind}`
+      const storageKey = namespace.key(`opencode:notification-${kind}`)
       const value: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "[]")
       const events = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
 

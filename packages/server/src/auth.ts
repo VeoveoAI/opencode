@@ -11,6 +11,7 @@ export type DecodedCredentials = {
 export type Info = {
   readonly password: Option.Option<string>
   readonly username: string
+  readonly basePath?: string
 }
 
 export const DEFAULT_USERNAME = "opencode"
@@ -18,8 +19,12 @@ export const DEFAULT_USERNAME = "opencode"
 export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 export class Config extends Context.Service<Config, Info>()("@opencode/ServerAuthConfig") {
-  static configLayer(input: { readonly password: Option.Option<string>; readonly username?: string }) {
-    return Layer.succeed(this, this.of({ password: input.password, username: input.username ?? DEFAULT_USERNAME }))
+  static configLayer(input: {
+    readonly password: Option.Option<string>
+    readonly username?: string
+    readonly basePath?: string
+  }) {
+    return Layer.succeed(this, this.of({ ...input, username: input.username ?? DEFAULT_USERNAME }))
   }
 
   static get layer() {

@@ -1,6 +1,9 @@
+import { BrowserStorage } from "@opencode/util/browser-storage"
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { MemoryRouter, createMemoryHistory } from "@solidjs/router"
 import { createComponent, render } from "solid-js/web"
+import { createEffect } from "solid-js"
+import { useCurrentRoute } from "../src/shell/state/layout"
 import { isStandalone, PwaRoutePersistence, restorePwaRoute } from "../src/runtime/platform/pwa"
 
 const key = "opencode.pwa.last-route"
@@ -12,6 +15,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  document.querySelector("base")?.remove()
   localStorage.removeItem(key)
   window.location.href = originalUrl
 })
@@ -92,5 +96,43 @@ test("persists router navigation including returning home", async () => {
     expect(localStorage.getItem(key)).toBe("/")
   } finally {
     dispose()
+  }
+})
+
+test("restores only routes within the hosted mount and persists prefixed router navigation", async () => {
+  const base = document.createElement("base")
+  base.href = "/computer/"
+  document.head.append(base)
+  window.history.replaceState(null, "", "http://localhost/computer/")
+  localStorage.setItem(key, "/server/local/session/foreign")
+  restorePwaRoute()
+  expect(window.location.pathname).toBe("/computer/")
+  const mountedKey = BrowserStorage.namespace().key(key)
+  localStorage.setItem(mountedKey, "/computer/server/local/session/saved")
+  restorePwaRoute()
+  expect(window.location.pathname).toBe("/computer/server/local/session/saved")
+
+  const host = document.createElement("div")
+  const history = createMemoryHistory()
+  history.set({ value: "/computer/new-session?draftId=123", replace: true, scroll: false })
+  const Root = () => {
+    const route = useCurrentRoute()
+    const label = document.createElement("output")
+    createEffect(() => {
+      label.textContent = route().type
+    })
+    return [label, createComponent(PwaRoutePersistence, {})]
+  }
+  const dispose = render(() => createComponent(MemoryRouter, { base: "/computer/", history, root: Root }), host)
+  try {
+    expect(localStorage.getItem(mountedKey)).toBe("/computer/new-session?draftId=123")
+    expect(host.textContent).toBe("draft")
+    history.set({ value: "/computer/", scroll: false })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(localStorage.getItem(mountedKey)).toBe("/computer/")
+    expect(host.textContent).toBe("home")
+  } finally {
+    dispose()
+    localStorage.removeItem(mountedKey)
   }
 })

@@ -16,6 +16,8 @@ export const password = Config.Redacted("OPENCODE_PASSWORD").pipe(
 // clients and servers.
 export const username = Config.String("OPENCODE_SERVER_USERNAME").pipe(Config.withDefault("opencode"))
 
+export const basePath = Config.String("OPENCODE_BASE_PATH").pipe(Config.withDefault("/"))
+
 export function session() {
   return Object.fromEntries(
     Object.entries(process.env).filter(

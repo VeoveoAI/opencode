@@ -9,6 +9,13 @@ describe("pairing link", () => {
     })
   })
 
+  test("retains the external base path when redeeming a hosted pairing link", () => {
+    expect(pairingLink("https://example.com/computer/auth/connect/abc_DEF-123")).toEqual({
+      urls: ["https://example.com/computer"],
+      code: "abc_DEF-123",
+    })
+  })
+
   test("reads every server address from opencode pair QR codes", () => {
     expect(
       pairingLink(

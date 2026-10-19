@@ -23,6 +23,8 @@ const sentry =
     : false
 
 export default defineConfig({
+  // Runtime <base> selects the external mount for this reusable asset archive.
+  base: "./",
   plugins: [
     desktopPlugin,
     icons(channel),

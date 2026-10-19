@@ -1,3 +1,4 @@
+import { routePath } from "@/runtime/platform/base-path"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { Predicate, Schema, SchemaGetter } from "effect"
 import { batch, createEffect, createMemo, onCleanup, onMount, untrack, type Accessor } from "solid-js"
@@ -94,7 +95,7 @@ export const currentRoute = (pathname: string, search: string): LayoutRoute => {
 export const useCurrentRoute = () => {
   const location = useLocation()
 
-  return createMemo(() => currentRoute(location.pathname, location.search))
+  return createMemo(() => currentRoute(routePath(location.pathname), location.search))
 }
 
 const sessionTabsSchema = Persistence.struct({

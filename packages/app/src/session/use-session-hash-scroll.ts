@@ -54,7 +54,7 @@ export const useSessionHashScroll = (input: {
 
     if (!location.hash) return
     clearing = true
-    navigate(location.pathname + location.search, { replace: true })
+    navigate(location.pathname + location.search, { replace: true, resolve: false })
   }
 
   const updateHash = (id: string) => {
@@ -64,6 +64,7 @@ export const useSessionHashScroll = (input: {
     clearing = false
     navigate(location.pathname + location.search + hash, {
       replace: true,
+      resolve: false,
     })
   }
 
