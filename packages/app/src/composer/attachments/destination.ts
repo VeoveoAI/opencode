@@ -28,7 +28,9 @@ export function useAttachmentDestination(controls: Accessor<ComposerControls>) {
       const info = await sdk.api.server.info({ signal })
       // One directory per upload keeps the original filename without collisions; the server
       // normalizes the separators and returns the resolved path.
-      const url = new URL("/api/experimental/fs/write", server.conn.http.url)
+      const base = new URL(server.conn.http.url)
+      if (!base.pathname.endsWith("/")) base.pathname += "/"
+      const url = new URL("api/experimental/fs/write", base)
       url.searchParams.set("location[directory]", location().directory)
       url.searchParams.set("path", `${info.paths.tmp}/uploads/${uuid()}/${file.name}`)
 
@@ -40,7 +42,13 @@ export function useAttachmentDestination(controls: Accessor<ComposerControls>) {
 // fetch cannot report upload progress and Chromium only streams request bodies over HTTP/2, so
 // the one request that needs both goes through XMLHttpRequest. The browser streams the File
 // from disk; nothing is buffered in the renderer.
-function write(url: URL, file: File, password: string | undefined, report: (loaded: number) => void, signal: AbortSignal) {
+function write(
+  url: URL,
+  file: File,
+  password: string | undefined,
+  report: (loaded: number) => void,
+  signal: AbortSignal,
+) {
   return new Promise<string>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open("POST", url)

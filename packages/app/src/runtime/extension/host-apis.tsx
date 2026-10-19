@@ -1,3 +1,4 @@
+import { routePath } from "@/runtime/platform/base-path"
 import {
   batch,
   createComputed,
@@ -796,7 +797,7 @@ export function createExtensionAttachment(apis: HostApis) {
     project: (server, title) => setProjects((pending) => [...pending, { server, title }]),
     font: () => terminalFontFamily(settings.appearance.terminalFont()),
     routing: useIsRouting(),
-    path: () => `${location.pathname}${location.search}`,
+    path: () => `${routePath(location.pathname)}${location.search}`,
     keybind: command.keybindParts,
     matches: command.matches,
     servers: () => global.servers.list().map(ServerConnection.key),

@@ -1,3 +1,4 @@
+import { basePath } from "@/runtime/platform/base-path"
 import "@/index.css"
 import { DialogProvider } from "@opencode/ui/context/dialog"
 import { FileComponentProvider } from "@opencode/ui/context/file"
@@ -109,7 +110,7 @@ export function AppInterface(props: {
   return (
     <ServersProvider canonicalLocalServer={props.canonicalLocalServer} servers={props.servers}>
       <SettingsProvider>
-        <Dynamic component={props.router ?? Router} root={Root}>
+        <Dynamic component={props.router ?? Router} root={Root} base={basePath()}>
           <AppRoutes />
         </Dynamic>
       </SettingsProvider>

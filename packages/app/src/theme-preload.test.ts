@@ -1,3 +1,4 @@
+import { BrowserStorage } from "@opencode/util/browser-storage"
 import { beforeEach, describe, expect, test } from "bun:test"
 
 const src = await Bun.file(new URL("../public/oc-theme-preload.js", import.meta.url)).text()
@@ -53,4 +54,31 @@ describe("theme preload", () => {
     expect(document.documentElement.dataset.colorScheme).toBe(expected)
     expect(document.getElementById("oc-theme-preload")?.textContent).toContain(css)
   })
+})
+
+test("hosted mounts restore only their own theme cache and never import root preferences", () => {
+  localStorage.setItem("opencode-theme-id", "nightowl")
+  localStorage.setItem("opencode-color-scheme", "dark")
+  const base = document.createElement("base")
+  document.head.append(base)
+  for (const [mount, theme, scheme] of [
+    ["/mount/a/", "nord", "light"],
+    ["/mount/b/", "vesper", "dark"],
+  ]) {
+    base.setAttribute("href", mount)
+    const namespace = BrowserStorage.namespace()
+    localStorage.setItem(namespace.key("opencode-theme-id"), theme)
+    localStorage.setItem(namespace.key("opencode-color-scheme"), scheme)
+  }
+  for (const [mount, theme, scheme] of [
+    ["/mount/a/", "nord", "light"],
+    ["/mount/b/", "vesper", "dark"],
+    ["/mount/empty/", "oc-2", "light"],
+  ]) {
+    base.setAttribute("href", mount)
+    run()
+    expect(document.documentElement.dataset.theme).toBe(theme)
+    expect(document.documentElement.dataset.colorScheme).toBe(scheme)
+  }
+  expect(localStorage.getItem("opencode-theme-id")).toBe("nightowl")
 })

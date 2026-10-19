@@ -1,4 +1,5 @@
 // @refresh reload
+import { BrowserStorage } from "@opencode/util/browser-storage"
 
 import { createEffect, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -96,11 +97,13 @@ function resolveStoredTheme(id: string | null | undefined, registered?: Record<s
   return "oc-2"
 }
 
+const storageNamespace = BrowserStorage.namespace()
+
 function read(key: string) {
   if (typeof localStorage !== "object") return null
 
   try {
-    return localStorage.getItem(key)
+    return localStorage.getItem(storageNamespace.key(key))
   } catch {
     return null
   }
@@ -110,7 +113,7 @@ function write(key: string, value: string) {
   if (typeof localStorage !== "object") return
 
   try {
-    localStorage.setItem(key, value)
+    localStorage.setItem(storageNamespace.key(key), value)
   } catch {}
 }
 
@@ -118,7 +121,7 @@ function drop(key: string) {
   if (typeof localStorage !== "object") return
 
   try {
-    localStorage.removeItem(key)
+    localStorage.removeItem(storageNamespace.key(key))
   } catch {}
 }
 
@@ -267,7 +270,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     const loadThemes = () => Promise.all(themeIDs().map(load)).then(() => store.themes)
 
     const onStorage = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEYS.THEME_ID && e.newValue) {
+      if (e.key === storageNamespace.key(STORAGE_KEYS.THEME_ID) && e.newValue) {
         const next = resolveStoredTheme(e.newValue, store.themes)
 
         if (next !== e.newValue) {
@@ -289,7 +292,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         })
       }
 
-      if (e.key === STORAGE_KEYS.COLOR_SCHEME && e.newValue) {
+      if (e.key === storageNamespace.key(STORAGE_KEYS.COLOR_SCHEME) && e.newValue) {
         setStore("colorScheme", e.newValue as ColorScheme)
         setStore("mode", e.newValue === "system" ? getSystemMode() : (e.newValue as "light" | "dark"))
       }

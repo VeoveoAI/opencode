@@ -35,6 +35,7 @@ function isSetupRequest(method: string, pathname: string) {
 
 export function createRequestQueue(input: {
   fetch: typeof globalThis.fetch
+  baseUrl?: () => string
   limit?: number
   slowLimit?: number
   stallMs?: number
@@ -119,7 +120,13 @@ export function createRequestQueue(input: {
   const fetch: typeof globalThis.fetch = Object.assign(
     async (resource: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(resource, init)
-      const pathname = new URL(request.url).pathname
+      const url = new URL(request.url)
+      const server = input.baseUrl ? new URL(input.baseUrl()) : undefined
+      const prefix = server ? `${server.pathname.replace(/\/$/, "")}/` : "/"
+      const pathname =
+        server && url.origin === server.origin && url.pathname.startsWith(prefix)
+          ? `/${url.pathname.slice(prefix.length)}`
+          : url.pathname
 
       // The event stream is long-lived; never count it against the request budget.
       if (pathname === "/api/event") return base(request)

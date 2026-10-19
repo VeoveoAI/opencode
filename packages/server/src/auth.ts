@@ -11,12 +11,13 @@ export type DecodedCredentials = {
 export type Info = {
   readonly password: Option.Option<string>
   readonly username: string
+  readonly basePath?: string
 }
 
 export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 export class Config extends Context.Service<Config, Info>()("@opencode/ServerAuthConfig") {
-  static configLayer(input: Pick<Info, "password">) {
+  static configLayer(input: Pick<Info, "password" | "basePath">) {
     return Layer.succeed(this, this.of({ ...input, username: "opencode" }))
   }
 

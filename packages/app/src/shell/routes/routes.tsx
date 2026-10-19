@@ -1,3 +1,4 @@
+import { routePath } from "@/runtime/platform/base-path"
 import { Route, useParams } from "@solidjs/router"
 import { createMemo, lazy, Show, Suspense, type ParentProps } from "solid-js"
 import { Home } from "@/home/route"
@@ -28,7 +29,7 @@ const TargetSessionRouteContent = lazy(() =>
 )
 
 export function preloadRoute(url: string) {
-  const pathname = url.split(/[?#]/, 1)[0]
+  const pathname = routePath(url.split(/[?#]/, 1)[0])
 
   if (pathname === "/new-session") return DraftRoute.preload().then(() => undefined)
 

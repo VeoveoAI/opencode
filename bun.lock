@@ -95,6 +95,7 @@
         "tailwindcss": "4.3.3",
       },
       "devDependencies": {
+        "@effect/platform-node": "catalog:",
         "@happy-dom/global-registrator": "20.0.11",
         "@playwright/test": "catalog:",
         "@sentry/vite-plugin": "catalog:",

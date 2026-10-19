@@ -26,14 +26,23 @@ export const ServerHandler = HttpApiBuilder.group(Api, "server.server", (handler
           }
         }),
       )
-      .handle("server.pair", () => pairing.issue())
+      .handle("server.pair", () =>
+        ServerAuth.required(auth)
+          ? pairing.issue()
+          : Effect.fail(
+              new UnauthorizedError({ message: "Pairing is unavailable without server password authentication" }),
+            ),
+      )
       .handle(
         "server.connect",
         Effect.fn(function* (ctx) {
           const request = yield* HttpServerRequest.HttpServerRequest
           // Browser navigations ask for HTML; everything else is an API client that wants the token.
           const browser = request.headers.accept?.includes("text/html") === true
-          const token = (yield* pairing.consume(ctx.params.code)) ? ServerAuth.issueSession(auth) : undefined
+          const token =
+            ServerAuth.required(auth) && (yield* pairing.consume(ctx.params.code))
+              ? ServerAuth.issueSession(auth)
+              : undefined
           if (token === undefined) {
             if (!browser) return yield* new UnauthorizedError({ message: "Pairing link expired or already used" })
             return HttpServerResponse.text(
@@ -42,9 +51,9 @@ export const ServerHandler = HttpApiBuilder.group(Api, "server.server", (handler
             )
           }
           if (!browser) return { token }
-          return HttpServerResponse.redirect("/").pipe(
+          return HttpServerResponse.redirect(auth.basePath ?? "/").pipe(
             HttpServerResponse.setCookieUnsafe(ServerAuth.sessionCookieName(request.headers.host), token, {
-              path: "/",
+              path: auth.basePath ?? "/",
               httpOnly: true,
               sameSite: "lax",
               maxAge: Duration.seconds(ServerAuth.SESSION_TTL_SECONDS),

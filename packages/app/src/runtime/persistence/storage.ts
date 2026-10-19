@@ -1,6 +1,7 @@
 import { Platform, usePlatform } from "@/runtime/platform/platform"
 import { messageSync, type AsyncStorage, type SyncStorage } from "@solid-primitives/storage"
 import { checksum } from "@opencode/util/encode"
+import { BrowserStorage } from "@opencode/util/browser-storage"
 import { createResource, onCleanup, type Accessor } from "solid-js"
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Option, Predicate, Schema } from "effect"
@@ -43,8 +44,6 @@ type CopyFrom = { key: string; storage?: string; pick?: PickPart }
 const GLOBAL_STORAGE = "opencode.global.dat"
 
 const WINDOW_STORAGE = "opencode.window"
-
-const LOCAL_PREFIX = "opencode."
 
 const fallback = new Map<string, boolean>()
 
@@ -145,7 +144,7 @@ function quota(error: unknown) {
 
 type Evict = { key: string; size: number }
 
-function evict(storage: Storage, keep: string, value: string) {
+function evict(storage: Storage, keep: string, value: string, namespace: ReturnType<typeof BrowserStorage.namespace>) {
   const total = storage.length
   const indexes = Array.from({ length: total }, (_, index) => index)
   const items: Evict[] = []
@@ -155,7 +154,7 @@ function evict(storage: Storage, keep: string, value: string) {
 
     if (!name) continue
 
-    if (!name.startsWith(LOCAL_PREFIX)) continue
+    if (!namespace.owns(name)) continue
 
     if (name === keep) continue
     const stored = storage.getItem(name)
@@ -181,7 +180,7 @@ function evict(storage: Storage, keep: string, value: string) {
   return false
 }
 
-function write(storage: Storage, key: string, value: string) {
+function write(storage: Storage, key: string, value: string, namespace: ReturnType<typeof BrowserStorage.namespace>) {
   try {
     storage.setItem(key, value)
     cacheSet(key, value)
@@ -202,7 +201,7 @@ function write(storage: Storage, key: string, value: string) {
     if (!quota(error)) throw error
   }
 
-  const ok = evict(storage, key, value)
+  const ok = evict(storage, key, value, namespace)
 
   return ok
 }
@@ -382,8 +381,9 @@ function serverWorkspaceTarget(scope: ServerScope, dir: string, key: string): Pe
 }
 
 function localStorageWithPrefix(prefix: string): SyncStorage {
-  const base = `${prefix}:`
-  const scope = `prefix:${prefix}`
+  const namespace = BrowserStorage.namespace()
+  const base = namespace.key(prefix ? `${prefix}:` : "")
+  const scope = prefix ? `prefix:${base}` : namespace.key("direct")
   const item = (key: string) => base + key
 
   return {
@@ -414,7 +414,7 @@ function localStorageWithPrefix(prefix: string): SyncStorage {
       if (fallbackDisabled(scope)) return
 
       try {
-        if (write(localStorage, name, value)) return
+        if (write(localStorage, name, value, namespace)) return
       } catch {
         fallbackSet(scope)
 
@@ -439,54 +439,7 @@ function localStorageWithPrefix(prefix: string): SyncStorage {
 }
 
 function localStorageDirect(): SyncStorage {
-  const scope = "direct"
-
-  return {
-    getItem: (key) => {
-      const cached = cacheGet(key)
-
-      if (fallbackDisabled(scope)) return cached ?? null
-
-      const stored = (() => {
-        try {
-          return localStorage.getItem(key)
-        } catch {
-          fallbackSet(scope)
-
-          return null
-        }
-      })()
-
-      if (stored === null) return cached ?? null
-      cacheSet(key, stored)
-
-      return stored
-    },
-    setItem: (key, value) => {
-      if (fallbackDisabled(scope)) return
-
-      try {
-        if (write(localStorage, key, value)) return
-      } catch {
-        fallbackSet(scope)
-
-        return
-      }
-
-      fallbackSet(scope)
-    },
-    removeItem: (key) => {
-      cacheDelete(key)
-
-      if (fallbackDisabled(scope)) return
-
-      try {
-        localStorage.removeItem(key)
-      } catch {
-        fallbackSet(scope)
-      }
-    },
-  }
+  return localStorageWithPrefix("")
 }
 
 const DRAFT_PERSISTED_KEYS = ["prompt", "comments", "file-view", "layout"]
@@ -537,7 +490,7 @@ export const Persist = {
   },
 }
 
-function resolveTarget(target: PersistTarget, platform: Platform): PersistTarget {
+function resolveTarget(target: PersistTarget, platform: Pick<Platform, "platform" | "windowID">): PersistTarget {
   if (target.scope !== "window") return target
   const windowID = platform.platform === "desktop" ? platform.windowID : "browser"
 
@@ -554,12 +507,10 @@ function resolveTarget(target: PersistTarget, platform: Platform): PersistTarget
  * again: a whole-value source is deleted from every storage the import reads, and a picked source, which other owners
  * share, stays while the value becomes `null`, which every store schema reads as its initial value without importing.
  */
-export function removePersisted(
-  target: Pick<PersistTarget, "draft" | "storage" | "workspaceStorageAliases" | "copyFrom" | "key">,
-  platform?: Platform,
-) {
-  if (target.draft && platform?.draftStore) {
-    void platform.draftStore.removeItem(`${target.storage ?? "default"}:${target.key}`)
+export function removePersisted(target: PersistTarget, platform?: Platform) {
+  const config = resolveTarget(target, platform ?? { platform: "web" })
+  if (config.draft && platform?.draftStore) {
+    void platform.draftStore.removeItem(`${config.storage ?? "default"}:${config.key}`)
   }
 
   const desktop = platform?.platform === "desktop" ? platform.storage : undefined
@@ -570,16 +521,17 @@ export function removePersisted(
     return name ? localStorageWithPrefix(name) : localStorageDirect()
   }
 
-  const copies = target.copyFrom ?? []
+  const copies = config.copyFrom ?? []
 
-  if (copies.some((copy) => copy.pick)) void open(target.storage)?.setItem(target.key, "null")
-  else void open(target.storage)?.removeItem(target.key)
-  target.workspaceStorageAliases?.forEach((name) => void open(name)?.removeItem(target.key))
+  if (copies.some((copy) => copy.pick)) void open(config.storage)?.setItem(config.key, "null")
+  else void open(config.storage)?.removeItem(config.key)
+  config.workspaceStorageAliases?.forEach((name) => void open(name)?.removeItem(config.key))
+  if (config.previousKey) void open(undefined)?.removeItem(config.previousKey)
   copies.forEach((copy) => {
     if (copy.pick) return
-    void open(copy.storage ?? target.storage)?.removeItem(copy.key)
+    void open(copy.storage ?? config.storage)?.removeItem(copy.key)
 
-    if (target.storage) void open(undefined)?.removeItem(copy.key)
+    if (config.storage) void open(undefined)?.removeItem(copy.key)
   })
 }
 
@@ -739,9 +691,10 @@ export function persisted<S extends Schema.ConstraintCodec<object, unknown>>(
     return api
   })()
 
+  const namespace = BrowserStorage.namespace(isDesktop ? "/" : undefined)
   const channel =
     config.sync && typeof BroadcastChannel !== "undefined"
-      ? new BroadcastChannel(`opencode.persist:${config.storage ?? "default"}:${config.key}`)
+      ? new BroadcastChannel(namespace.key(`opencode.persist:${config.storage ?? "default"}:${config.key}`))
       : undefined
 
   if (channel) onCleanup(() => channel.close())

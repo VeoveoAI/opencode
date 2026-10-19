@@ -1,9 +1,9 @@
 {
   "name": "OpenCode",
   "short_name": "OpenCode",
-  "id": "/",
-  "start_url": "/",
-  "scope": "/",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png",

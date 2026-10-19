@@ -112,6 +112,7 @@
   "dependencies": {
     "@kitlangton/solid-motion": "0.2.2",
     "@kobalte/core": "catalog:",
+    "@opencode/util": "workspace:*",
     "@pierre/diffs": "catalog:",
     "@solid-primitives/event-listener": "catalog:",
     "@solid-primitives/resize-observer": "catalog:",

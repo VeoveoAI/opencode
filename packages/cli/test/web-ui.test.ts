@@ -1,9 +1,11 @@
 import { NodeFileSystem, NodeHttpServer } from "@effect/platform-node"
 import { ServerProcess } from "@opencode/server/process"
+import { OpenCode } from "@opencode/client/promise"
 import { afterAll, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { HttpServer, HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { createServer } from "node:http"
+import { createHash } from "node:crypto"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -87,6 +89,131 @@ describe("web UI", () => {
       const authorized = yield* Effect.promise(() => fetch(new URL("/api/info", origin), { headers: { cookie } }))
       expect(authorized.status).toBe(200)
       yield* Effect.promise(() => authorized.arrayBuffer())
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
+  )
+
+  it.live("serves deep links, assets, API and pairing through a prefix-stripping gateway", () =>
+    Effect.gen(function* () {
+      const basePath = "/computer/c/opaque-id/"
+      const index = '<html><head><base href="/" /></head><body><script src="_assets/app.js"></script></body></html>'
+      const originalIntegrity = `sha256-${createHash("sha256").update(index).digest("base64")}`
+      const worker = `precache([{url:"index.html",integrity:"${originalIntegrity}"}])`
+      const transform = yield* WebUi.handler({
+        basePath,
+        brotli: { "sw.js": brotliCompressSync(worker) },
+        assets: {
+          "index.html": index,
+          "_assets/app.js": "hosted script",
+          "sw.js": worker,
+        },
+      })
+      const server = yield* ServerProcess.start<never, never>(
+        {
+          hostname: "127.0.0.1",
+          port: 0,
+          password: "secret",
+          basePath,
+          database: { path: ":memory:" },
+          models: { fetch: false },
+        },
+        undefined,
+        transform,
+      )
+      const upstream = HttpServer.formatAddress(server.address)
+      const gateway = yield* NodeHttpServer.make(createServer, { host: "127.0.0.1", port: 0 })
+      yield* gateway.serve(
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest
+          const url = new URL(request.url, upstream)
+          if (!url.pathname.startsWith(basePath)) return HttpServerResponse.empty({ status: 404 })
+          url.pathname = url.pathname.slice(basePath.length - 1)
+          const response = yield* Effect.promise(() =>
+            fetch(url, {
+              method: request.method,
+              headers: request.headers,
+              redirect: "manual",
+              decompress: false,
+            }),
+          )
+          // This hop buffers the encoded body; its HTTP server owns the new
+          // message framing. Preserve Content-Encoding, never upstream framing.
+          const headers = new Headers(response.headers)
+          headers.delete("transfer-encoding")
+          headers.delete("content-length")
+          headers.delete("connection")
+          return HttpServerResponse.raw(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer())), {
+            status: response.status,
+            headers: Object.fromEntries(headers),
+          })
+        }),
+      )
+      const origin = HttpServer.formatAddress(gateway.address)
+      const pageUrl = new URL(`${basePath}server/local/session/example`, origin)
+      const page = yield* Effect.promise(() => fetch(pageUrl).then((response) => response.text()))
+      expect(page).toContain(`<base href="${basePath}" />`)
+      const mount = /<base href="([^"]+)"/.exec(page)?.[1]
+      const script = /<script src="([^"]+)"/.exec(page)?.[1]
+      if (!mount || !script) throw new Error("Hosted page is missing its mount or script")
+      const base = new URL(mount, pageUrl)
+      const asset = new URL(script, base)
+      expect(asset.pathname).toBe(`${basePath}_assets/app.js`)
+      expect(yield* Effect.promise(() => fetch(asset).then((response) => response.text()))).toBe("hosted script")
+      const mountedWorker = yield* Effect.promise(() =>
+        fetch(new URL("sw.js", base), { headers: { "accept-encoding": "br" } }),
+      )
+      const workerBody = yield* Effect.promise(() => mountedWorker.text())
+      expect(workerBody).toContain(`sha256-${createHash("sha256").update(page).digest("base64")}`)
+      expect(workerBody).not.toContain(originalIntegrity)
+      const headers = { authorization: `Basic ${btoa("opencode:secret")}` }
+      const client = OpenCode.make({ baseUrl: base.href, headers })
+      expect(yield* Effect.promise(() => client.server.info())).toHaveProperty("pid")
+      const pairing = yield* Effect.promise(() => client.server.pair())
+      const redirect = yield* Effect.promise(() =>
+        fetch(new URL(`auth/connect/${pairing.code}`, base), {
+          redirect: "manual",
+          headers: { accept: "text/html" },
+        }),
+      )
+      expect(redirect.status).toBe(302)
+      expect(redirect.headers.get("location")).toBe(basePath)
+      expect(redirect.headers.get("set-cookie")).toContain(`Path=${basePath}`)
+      const cookie = (redirect.headers.get("set-cookie") ?? "").split(";")[0]
+      const authorized = yield* Effect.promise(() => fetch(new URL("api/info", base), { headers: { cookie } }))
+      expect(authorized.status).toBe(200)
+      yield* Effect.promise(() => authorized.arrayBuffer())
+      const outside = yield* Effect.promise(() => fetch(new URL("/api/info", origin)))
+      expect(outside.status).toBe(404)
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
+  )
+
+  it.live("keeps a trusted proxy shell online-only without changing ordinary PWA serving", () =>
+    Effect.gen(function* () {
+      const transform = yield* WebUi.handler({
+        cache: "online-only",
+        assets: {
+          "index.html": '<html><head><base href="/" /></head><body>private shell</body></html>',
+          "_assets/app.js": "private script",
+          "sw.js": "worker",
+          "registerSW.js": "registration",
+        },
+      })
+      const server = yield* ServerProcess.start<never, never>(
+        { hostname: "127.0.0.1", port: 0, trustedLocalProxy: true, database: { path: ":memory:" } },
+        undefined,
+        transform,
+      )
+      const origin = HttpServer.formatAddress(server.address)
+      yield* Effect.forEach(
+        ["/", "/server/local/session/private", "/_assets/app.js", "/sw.js", "/registerSW.js"],
+        (pathname) =>
+          Effect.gen(function* () {
+            const response = yield* Effect.promise(() => fetch(new URL(pathname, origin)))
+            expect(response.headers.get("cache-control")).toBe("private, no-store")
+            expect(response.status).toBe(pathname.endsWith("sw.js") || pathname.endsWith("registerSW.js") ? 404 : 200)
+            const body = yield* Effect.promise(() => response.text())
+            if (pathname === "/") expect(body).toContain('<meta name="opencode-cache" content="online-only" />')
+          }),
+      )
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   )
 

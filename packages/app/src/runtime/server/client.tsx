@@ -127,7 +127,10 @@ export function createServerTransport(input: { http: ServerConnection.HttpBase; 
   readonly api: ServerApi
   readonly pty: ReturnType<typeof createPtyClient>
 } {
-  const queue = createRequestQueue({ fetch: input.fetch ?? globalThis.fetch })
+  const queue = createRequestQueue({
+    fetch: input.fetch ?? globalThis.fetch,
+    baseUrl: () => state.current.http.url,
+  })
 
   const build = (http: ServerConnection.HttpBase) => {
     const api = createApiForServer({ server: http, fetch: queue.fetch })

@@ -21,7 +21,7 @@ export function icons(channel: string): Plugin {
       fileName: "site.webmanifest",
       source: JSON.stringify({
         ...manifest,
-        icons: manifest.icons.map((icon) => ({ ...icon, src: `/${prefix}${icon.src}` })),
+        icons: manifest.icons.map((icon) => ({ ...icon, src: `${prefix}${icon.src}` })),
       }),
       type: "application/manifest+json",
     },
@@ -45,8 +45,8 @@ export function icons(channel: string): Plugin {
       order: "pre",
       handler(html) {
         return html
-          .replace("%OPENCODE_FAVICON%", `/${prefix}/favicon.ico`)
-          .replace("%OPENCODE_APPLE_TOUCH_ICON%", `/${prefix}/apple-touch-icon.png`)
+          .replace("%OPENCODE_FAVICON%", `${prefix}/favicon.ico`)
+          .replace("%OPENCODE_APPLE_TOUCH_ICON%", `${prefix}/apple-touch-icon.png`)
       },
     },
   }

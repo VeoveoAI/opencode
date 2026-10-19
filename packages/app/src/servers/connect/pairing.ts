@@ -42,8 +42,9 @@ export function pairingLink(value: string) {
   const url = URL.parse(trimmed)
 
   if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return
-  const code = /^\/auth\/connect\/([^/]+)$/.exec(url.pathname)?.[1]
-  const address = serverAddress(url.origin)
+  const match = /^(.*?)\/auth\/connect\/([^/]+)$/.exec(url.pathname)
+  const code = match?.[2]
+  const address = match ? serverAddress(`${url.origin}${match[1]}`) : undefined
 
   if (!code || !CODE.test(code) || !address) return
 

@@ -8,6 +8,7 @@ test.each(["dev", "beta", "prod", "local"])("bundles %s app icons", async (chann
   const result = await build({
     root: import.meta.dirname,
     configFile: false,
+    base: "./",
     logLevel: "silent",
     plugins: [
       icons(channel),
@@ -49,32 +50,37 @@ test.each(["dev", "beta", "prod"])("serves %s app icons", async (channel) => {
 
     if (!url) throw new Error("Expected a local URL")
 
-    await check(channel, async (path) => {
-      const response = await fetch(new URL(path, url))
-      expect(response.status).toBe(200)
+    await check(
+      channel,
+      async (path) => {
+        const response = await fetch(new URL(path, url))
+        expect(response.status).toBe(200)
 
-      if (path.endsWith(".webmanifest")) expect(response.headers.get("content-type")).toBe("application/manifest+json")
+        if (path.endsWith(".webmanifest"))
+          expect(response.headers.get("content-type")).toBe("application/manifest+json")
 
-      if (path.endsWith(".png")) expect(response.headers.get("content-type")).toBe("image/png")
+        if (path.endsWith(".png")) expect(response.headers.get("content-type")).toBe("image/png")
 
-      return new Uint8Array(await response.arrayBuffer())
-    })
+        return new Uint8Array(await response.arrayBuffer())
+      },
+      "/",
+    )
   } finally {
     await server.close()
   }
 })
 
-async function check(channel: string, read: (path: string) => Promise<Uint8Array>) {
+async function check(channel: string, read: (path: string) => Promise<Uint8Array>, hrefBase = "") {
   const html = new TextDecoder().decode(await read("/index.html"))
   const actual: typeof manifest = JSON.parse(new TextDecoder().decode(await read("/site.webmanifest")))
   expect(actual.icons.some((icon) => icon.purpose === "maskable")).toBe(true)
   expect(actual).toEqual({
     ...manifest,
-    icons: manifest.icons.map((icon) => ({ ...icon, src: `/icons/${channel}${icon.src}` })),
+    icons: manifest.icons.map((icon) => ({ ...icon, src: `icons/${channel}${icon.src}` })),
   })
-  expect(html).toContain(`href="/icons/${channel}/favicon.ico"`)
-  expect(html).toContain(`href="/icons/${channel}/apple-touch-icon.png"`)
-  expect(html).toContain(`href="/site.webmanifest"`)
+  expect(html).toContain(`href="${hrefBase}icons/${channel}/favicon.ico"`)
+  expect(html).toContain(`href="${hrefBase}icons/${channel}/apple-touch-icon.png"`)
+  expect(html).toContain(`href="${hrefBase}site.webmanifest"`)
   expect(html).not.toContain("%OPENCODE_")
 
   await Promise.all(

@@ -4,7 +4,9 @@ import { createServer, type ServerResponse } from "node:http"
 import type { AddressInfo } from "node:net"
 import { once } from "node:events"
 import { createHash } from "node:crypto"
-import { join, extname, relative, sep } from "node:path"
+import { join, extname, relative, sep, dirname } from "node:path"
+import { spawn } from "node:child_process"
+import { createInterface } from "node:readline"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import { build } from "vite"
@@ -31,7 +33,7 @@ const fixture = test.extend<{ site: Site }, { builds: Record<string, Record<stri
           await mkdir(join(root, "public", "nested"), { recursive: true })
           await Promise.all(
             Object.entries({
-              "index.html": `<html><head></head><body><h1>Loading</h1><label>Draft<textarea></textarea></label><button>Load lazy</button><output></output><script type="module" src="/main.js"></script></body></html>`,
+              "index.html": `<html><head><base href="/" /></head><body><h1>Loading</h1><label>Draft<textarea></textarea></label><button>Load lazy</button><output></output><script type="module" src="/main.js"></script></body></html>`,
               "main.js": `document.querySelector("h1").textContent = "${version}";
             document.querySelector("button").onclick = async () => {
               document.querySelector("output").textContent = await (await import("./lazy.js")).load()
@@ -49,6 +51,7 @@ const fixture = test.extend<{ site: Site }, { builds: Record<string, Record<stri
           await build({
             configFile: false,
             root,
+            base: "./",
             logLevel: "silent",
             build: { outDir, assetsDir: "_assets", sourcemap: true },
             plugins: serviceWorker(outDir),
@@ -286,7 +289,9 @@ fixture(
         replacement.evaluate(() => {
           // This runs in the service worker, whose global scope holds its registration.
           const registration =
-            "registration" in self && self.registration instanceof ServiceWorkerRegistration ? self.registration : undefined
+            "registration" in self && self.registration instanceof ServiceWorkerRegistration
+              ? self.registration
+              : undefined
 
           return { waiting: !!registration?.waiting, active: registration?.active?.state }
         }),
@@ -492,5 +497,131 @@ test("the production build installs as an app behind an authenticating proxy", a
     await context.close()
     server.closeAllConnections()
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+  }
+})
+
+fixture(
+  "mounts one built archive under a nested prefix without weakening precache integrity",
+  async ({ page, context, builds }) => {
+    const mount = "/computer/c/browser/"
+    const directory = await mkdtemp(join(tmpdir(), "opencode-native-web-ui-"))
+    await Promise.all(
+      Object.entries(builds.old).map(async ([path, bytes]) => {
+        const target = join(directory, path.slice(1))
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, bytes)
+      }),
+    )
+    // Native Effect modules use Bun's TypeScript runtime, outside Playwright's Babel transform.
+    const server = spawn("bun", [fileURLToPath(new URL("./native-web-ui.ts", import.meta.url)), directory, mount], {
+      stdio: ["ignore", "pipe", "inherit"],
+    })
+    const exited = once(server, "exit")
+    const output = createInterface({ input: server.stdout })
+    try {
+      const origin = await Promise.race([
+        once(output, "line").then(([line]) => new URL(line).origin),
+        exited.then(() => {
+          throw new Error("Native web UI fixture exited before listening")
+        }),
+      ])
+      await page.goto(`${origin}${mount}server/local/session/deep`)
+      await expect(page.getByRole("heading")).toHaveText("old")
+      await page.evaluate(async () => {
+        await navigator.serviceWorker.register(new URL("sw.js", document.baseURI), {
+          scope: new URL(".", document.baseURI).pathname,
+        })
+        await navigator.serviceWorker.ready
+      })
+      await page.reload()
+      await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller?.state)).toBe("activated")
+      expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.scope)).toBe(
+        `${origin}${mount}`,
+      )
+      await context.setOffline(true)
+      await page.goto(`${origin}${mount}server/local/session/offline`)
+      await expect(page.getByRole("heading")).toHaveText("old")
+      await page.getByRole("button", { name: "Load lazy" }).click()
+      await expect(page.getByRole("status")).toHaveText("old nested lazy loaded")
+      await context.setOffline(false)
+      const denied = await page.goto(`${origin}${mount}auth/connect/missing`)
+      expect(denied?.status()).toBe(404)
+    } finally {
+      server.kill()
+      await exited
+      output.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+)
+
+test("an online-only native shell cannot bypass a later outer-gateway denial", async ({ browser }) => {
+  const directory = await mkdtemp(join(tmpdir(), "opencode-online-only-"))
+  const source = join(directory, "source")
+  const archive = join(directory, "archive")
+  const mount = "/private/c/online/"
+  await mkdir(source)
+  await writeFile(
+    join(source, "index.html"),
+    '<html><head><base href="/" /></head><body><h1>Loading</h1><script type="module" src="/main.js"></script></body></html>',
+  )
+  await writeFile(
+    join(source, "main.js"),
+    `import { registerServiceWorker } from ${JSON.stringify(fileURLToPath(new URL("../../src/runtime/platform/pwa.ts", import.meta.url)))}; registerServiceWorker(); document.querySelector("h1").textContent = "Private shell";`,
+  )
+  await build({ configFile: false, root: source, base: "./", logLevel: "silent", build: { outDir: archive } })
+  const native = spawn(
+    "bun",
+    [fileURLToPath(new URL("./native-web-ui.ts", import.meta.url)), archive, mount, "online-only"],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  )
+  const exited = once(native, "exit")
+  const output = createInterface({ input: native.stdout })
+  const requests: string[] = []
+  const context = await browser.newContext()
+  const gateway = createServer()
+  try {
+    const backend = await Promise.race([
+      once(output, "line").then(([line]) => new URL(line).origin),
+      exited.then(() => {
+        throw new Error("Native online-only fixture exited before listening")
+      }),
+    ])
+    gateway.on("request", async (request, response) => {
+      const path = request.url ?? "/"
+      requests.push(path)
+      if (!request.headers.cookie?.includes("session=signed-in"))
+        return void response
+          .writeHead(401, { "cache-control": "private, no-store", "content-type": "text/html" })
+          .end("<h1>Sign in</h1>")
+      const upstream = await fetch(`${backend}${path}`)
+      response.writeHead(upstream.status, Object.fromEntries(upstream.headers))
+      response.end(Buffer.from(await upstream.arrayBuffer()))
+    })
+    gateway.listen(0, "127.0.0.1")
+    await once(gateway, "listening")
+    const origin = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`
+    await context.addCookies([{ name: "session", value: "signed-in", url: origin }])
+    const page = await context.newPage()
+    const initial = await page.goto(`${origin}${mount}`)
+    expect(initial?.headers()["cache-control"]).toBe("private, no-store")
+    await expect(page.getByRole("heading")).toHaveText("Private shell")
+    expect(await page.evaluate(() => navigator.serviceWorker.getRegistration())).toBeUndefined()
+    expect(requests.some((path) => path.endsWith("sw.js"))).toBe(false)
+    await context.clearCookies()
+    const denied = await page.goto(`${origin}${mount}server/local/session/known`)
+    expect(denied?.status()).toBe(401)
+    await expect(page.getByRole("heading")).toHaveText("Sign in")
+    await context.setOffline(true)
+    await expect(page.goto(`${origin}${mount}server/local/session/offline`)).rejects.toThrow()
+    await expect(page.getByRole("heading", { name: "Private shell" })).toHaveCount(0)
+  } finally {
+    await context.close()
+    gateway.closeAllConnections()
+    if (gateway.listening) await new Promise<void>((resolve) => gateway.close(() => resolve()))
+    native.kill()
+    await exited
+    output.close()
+    await rm(directory, { recursive: true, force: true })
   }
 })

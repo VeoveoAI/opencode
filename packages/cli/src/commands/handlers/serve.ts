@@ -9,6 +9,8 @@ export default Runtime.handler(
     if (input.service && input.stdio) return yield* Effect.fail(new Error("--service and --stdio cannot be combined"))
     return yield* ServerProcess.run({
       mode: input.service ? "service" : input.stdio ? "stdio" : "default",
+      trustedLocalProxy: input.trustedLocalProxy,
+      basePath: Option.getOrUndefined(input.basePath),
       hostname: Option.getOrUndefined(input.hostname),
       port: Option.getOrUndefined(input.port),
       cors: input.cors.length > 0 ? input.cors : undefined,

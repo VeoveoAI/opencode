@@ -12,6 +12,8 @@ export const password = Config.Redacted("OPENCODE_PASSWORD").pipe(
   Config.withDefault(undefined),
 )
 
+export const basePath = Config.String("OPENCODE_BASE_PATH").pipe(Config.withDefault("/"))
+
 export function session() {
   return Object.fromEntries(
     Object.entries(process.env).filter(

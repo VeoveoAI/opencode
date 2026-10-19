@@ -115,7 +115,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
     if (!next) return
     setHistory(next.state)
-    navigate(next.to.url, { state: unwrap(next.to.state) })
+    navigate(next.to.url, { state: unwrap(next.to.state), resolve: false })
   }
 
   const forward = () => {
@@ -123,7 +123,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
     if (!next) return
     setHistory(next.state)
-    navigate(next.to.url, { state: unwrap(next.to.state) })
+    navigate(next.to.url, { state: unwrap(next.to.state), resolve: false })
   }
 
   command.register(() => [

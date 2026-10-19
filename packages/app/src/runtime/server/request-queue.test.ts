@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { createRequestQueue } from "./request-queue"
 
 function setup(input?: {
+  baseUrl?: () => string
   limit?: number
   slowLimit?: number
   stallMs?: number
@@ -13,6 +14,7 @@ function setup(input?: {
   let clock = 0
 
   const queue = createRequestQueue({
+    baseUrl: input?.baseUrl,
     limit: input?.limit ?? 2,
     slowLimit: input?.slowLimit,
     stallMs: input?.stallMs,
@@ -109,6 +111,22 @@ describe("createRequestQueue", () => {
     await input.settle()
     expect(input.pending.map((item) => new URL(item.url).pathname).toSorted()).toEqual(["/api/event", "/api/session"])
     expect(input.queue.inflight()).toBe(1)
+  })
+
+  test("keeps prefixed event streams outside the request budget", async () => {
+    const input = setup({ limit: 1, baseUrl: () => "http://server/computer" })
+    const responses = [
+      input.queue.fetch("http://server/computer/api/session"),
+      input.queue.fetch("http://server/computer/api/event"),
+    ]
+    await input.settle()
+    expect(input.pending.map((item) => new URL(item.url).pathname).toSorted()).toEqual([
+      "/computer/api/event",
+      "/computer/api/session",
+    ])
+    expect(input.queue.inflight()).toBe(1)
+    input.pending.forEach((item) => item.resolve())
+    await Promise.all(responses)
   })
 
   test("aborted requests leave the queue without being sent", async () => {

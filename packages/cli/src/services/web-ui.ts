@@ -1,3 +1,4 @@
+import { BasePath } from "@opencode/util/base-path"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Effect, FileSystem } from "effect"
 import { HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http"
@@ -5,9 +6,12 @@ import { createHash } from "node:crypto"
 import { load, type AssetMap, type BrotliMap } from "../app-assets"
 
 export const handler = Effect.fn("cli.web-ui.handler")(function* (options?: {
+  readonly basePath?: string
+  readonly cache?: "offline" | "online-only"
   readonly assets?: AssetMap
   readonly brotli?: BrotliMap
 }) {
+  const basePath = BasePath.normalize(options?.basePath)
   const fileSystem = yield* FileSystem.FileSystem
   const assets = options?.assets
     ? Effect.succeed({ files: options.assets, brotli: options.brotli })
@@ -26,7 +30,11 @@ export const handler = Effect.fn("cli.web-ui.handler")(function* (options?: {
         return yield* api.pipe(
           Effect.catchIf(isRouteNotFound, () => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
         )
-      return yield* assets.pipe(Effect.flatMap((loaded) => serveUI(request, url, loaded.files, loaded.brotli)))
+      return yield* assets.pipe(
+        Effect.flatMap((loaded) =>
+          serveUI(request, url, loaded.files, loaded.brotli, basePath, options?.cache ?? "offline"),
+        ),
+      )
     })
 })
 
@@ -35,16 +43,45 @@ function serveUI(
   url: URL,
   assets: AssetMap,
   brotli: BrotliMap | undefined,
+  basePath: string,
+  cache: "offline" | "online-only",
 ) {
   const key = url.pathname.replace(/^\//, "")
+  if (cache === "online-only" && (key === "sw.js" || key === "registerSW.js"))
+    return Effect.succeed(HttpServerResponse.empty({ status: 404, headers: { "cache-control": "private, no-store" } }))
   // A browser that takes brotli gets the embedded bytes as they are, so the server decompresses nothing. The HTML stays
   // decoded, because its CSP hashes the inline theme script.
-  const encoded = key !== "index.html" && acceptsBrotli(request.headers["accept-encoding"]) ? brotli?.[key] : undefined
+  const adjustedWorker = key === "sw.js" && basePath !== "/"
+  const encoded =
+    key !== "index.html" && !adjustedWorker && acceptsBrotli(request.headers["accept-encoding"])
+      ? brotli?.[key]
+      : undefined
   const requested = encoded ?? assets[key]
   if ((key.startsWith("_assets/") || key.startsWith("icons/")) && requested === undefined)
     return Effect.succeed(HttpServerResponse.empty({ status: 404, headers: { "cache-control": "no-store" } }))
   const name = requested !== undefined ? key : "index.html"
-  const file = requested ?? assets["index.html"]
+  const source = requested ?? assets["index.html"]
+  const index = name === "index.html" || adjustedWorker ? assets["index.html"] : undefined
+  const mountedIndex =
+    typeof index === "string"
+      ? index
+          .replace(/<base href="\/"\s*\/>/, `<base href="${basePath}" />`)
+          .replace(
+            /<head>/i,
+            cache === "online-only" ? '<head><meta name="opencode-cache" content="online-only" />' : "<head>",
+          )
+      : index
+  // Workbox verifies the precached HTML. Update only that exact integrity when the
+  // native host changes its mount; every other asset keeps its published bytes.
+  const file =
+    name === "index.html"
+      ? mountedIndex
+      : adjustedWorker && typeof source === "string" && typeof index === "string" && typeof mountedIndex === "string"
+        ? source.replaceAll(
+            `sha256-${createHash("sha256").update(index).digest("base64")}`,
+            `sha256-${createHash("sha256").update(mountedIndex).digest("base64")}`,
+          )
+        : source
   if (file === undefined) return Effect.succeed(HttpServerResponse.empty({ status: 404 }))
   if (request.method !== "GET" && request.method !== "HEAD")
     return Effect.succeed(HttpServerResponse.empty({ status: 405 }))
@@ -52,7 +89,8 @@ function serveUI(
   const revalidate = html || name === "sw.js" || name === "registerSW.js"
   const headers = {
     "content-type": FSUtil.mimeType(name),
-    "cache-control": revalidate ? "no-cache" : "public, max-age=31536000, immutable",
+    "cache-control":
+      cache === "online-only" ? "private, no-store" : revalidate ? "no-cache" : "public, max-age=31536000, immutable",
     "content-security-policy": html
       ? cspForHtml(typeof file === "string" ? file : Buffer.from(file).toString())
       : csp(),
