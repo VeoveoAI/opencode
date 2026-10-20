@@ -1,3 +1,4 @@
+import { routePath } from "@/runtime/platform/base-path"
 import { createEffect, createMemo, createResource, Match, Show, Switch, untrack } from "solid-js"
 import { createStore, unwrap } from "solid-js/store"
 import { Dynamic, Portal } from "solid-js/web"
@@ -94,7 +95,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
     action: undefined,
   })
 
-  const path = () => `${location.pathname}${location.search}${location.hash}`
+  const path = () => `${routePath(location.pathname)}${location.search}${location.hash}`
 
   createEffect(() => {
     const current = { url: path(), state: location.state }
@@ -115,7 +116,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
     if (!next) return
     setHistory(next.state)
-    navigate(next.to.url, { state: unwrap(next.to.state), resolve: false })
+    navigate(next.to.url, { state: unwrap(next.to.state) })
   }
 
   const forward = () => {
@@ -123,7 +124,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
     if (!next) return
     setHistory(next.state)
-    navigate(next.to.url, { state: unwrap(next.to.state), resolve: false })
+    navigate(next.to.url, { state: unwrap(next.to.state) })
   }
 
   command.register(() => [
