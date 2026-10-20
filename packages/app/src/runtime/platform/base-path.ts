@@ -5,6 +5,11 @@ export function basePath() {
   return BasePath.current()
 }
 
+/** Solid Router retains a trailing slash when joining absolute route paths. */
+export function routerBasePath() {
+  return basePath().slice(0, -1)
+}
+
 /** Router locations include its base; domain route parsing remains mount-independent. */
 export function routePath(pathname: string) {
   const base = basePath()
