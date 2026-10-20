@@ -1,6 +1,7 @@
 import { BrowserStorage } from "@opencode/util/browser-storage"
+import { basePath, routerBasePath } from "../src/runtime/platform/base-path"
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { MemoryRouter, createMemoryHistory } from "@solidjs/router"
+import { A, MemoryRouter, createMemoryHistory, useNavigate } from "@solidjs/router"
 import { createComponent, render } from "solid-js/web"
 import { createEffect } from "solid-js"
 import { useCurrentRoute } from "../src/shell/state/layout"
@@ -134,5 +135,41 @@ test("restores only routes within the hosted mount and persists prefixed router 
   } finally {
     dispose()
     localStorage.removeItem(mountedKey)
+  }
+})
+
+test("router links and navigation join root and hosted mounts with one separator", async () => {
+  for (const mount of ["/", "/computer/c/opaque-id/"]) {
+    const base = document.createElement("base")
+    base.href = mount
+    document.head.append(base)
+    const host = document.createElement("div")
+    const history = createMemoryHistory()
+    history.set({ value: mount, replace: true, scroll: false })
+    const navigation: ReturnType<typeof useNavigate>[] = []
+    const Root = () => {
+      navigation.push(useNavigate())
+      return [
+        createComponent(A, { href: "/settings", children: "Settings" }),
+        createComponent(A, { href: "/new-session", children: "New session" }),
+      ]
+    }
+    const dispose = render(() => createComponent(MemoryRouter, { base: routerBasePath(), history, root: Root }), host)
+    try {
+      // The HTML/assets/PWA mount retains its canonical trailing slash.
+      expect(basePath()).toBe(mount)
+      expect(Array.from(host.querySelectorAll("a"), (link) => link.getAttribute("href"))).toEqual([
+        `${mount}settings`,
+        `${mount}new-session`,
+      ])
+      for (const route of ["settings", "new-session?draftId=123#draft"]) {
+        navigation[0](`/${route}`)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(history.get()).toBe(`${mount}${route}`)
+      }
+    } finally {
+      dispose()
+      base.remove()
+    }
   }
 })
