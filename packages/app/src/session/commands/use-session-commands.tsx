@@ -15,14 +15,13 @@ import { showToast } from "@/shell/notifications/toast"
 import { fetchSessionExport, saveSessionExport, sessionExportFilename } from "@/session/commands/export"
 import { usePlatform } from "@/runtime/platform/platform"
 import type { SessionModel } from "@/session/model"
-import type { SessionRevert } from "@/session/revert"
 import { useExtensionClaims, useExtensionScoped } from "@/runtime/extension/commands"
 import type { Region } from "@/runtime/extension/panels"
 import { sideTabShortcuts } from "@/runtime/extension/closed-tabs"
 
 type SessionCommandSource = {
   identity: SessionModel["identity"]
-  data: Pick<SessionModel["data"], "info" | "revertMessageID">
+  data: Pick<SessionModel["data"], "info">
   history: Pick<SessionModel["history"], "visibleUserMessages">
   layout: SessionModel["layout"]
   ownership: SessionModel["ownership"]
@@ -36,7 +35,6 @@ export type SessionCommandContext = {
     move: () => Promise<void>
   }
   navigateMessageByOffset: (offset: number) => void
-  revert: Pick<SessionRevert, "undo" | "redo">
   focusInput: () => void
   // The composer's model, which a compaction runs with.
   model: () => { id: string; providerID: string; variant?: string } | undefined
@@ -328,9 +326,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     })
   }
 
-  const undo = actions.revert.undo
-  const redo = actions.revert.redo
-
   const compact = async () => {
     const sessionID = actions.session.identity.params.id
 
@@ -357,22 +352,6 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       title: language.t("command.session.new"),
       slash: "new",
       onSelect: (source) => command.trigger("tab.new", source),
-    }),
-    sessionCommand({
-      id: "session.undo",
-      title: language.t("command.session.undo"),
-      description: language.t("command.session.undo.description"),
-      slash: "undo",
-      disabled: !actions.session.identity.params.id || actions.session.history.visibleUserMessages().length === 0,
-      onSelect: undo,
-    }),
-    sessionCommand({
-      id: "session.redo",
-      title: language.t("command.session.redo"),
-      description: language.t("command.session.redo.description"),
-      slash: "redo",
-      disabled: !actions.session.identity.params.id || !actions.session.data.revertMessageID(),
-      onSelect: redo,
     }),
     sessionCommand({
       id: "session.compact",

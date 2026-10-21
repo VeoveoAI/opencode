@@ -66,7 +66,6 @@ import { DialogSelect } from "../../ui/dialog-select"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { TodoItem } from "../../component/todo-item"
 import { DialogImagePreview } from "../../component/dialog-image-preview"
-import { statusLabel } from "../../component/dialog-workspace-file-changes"
 import { DialogMessage } from "./dialog-message"
 import { DialogFork } from "./dialog-fork"
 import { DialogTimeline } from "./dialog-timeline"
@@ -180,12 +179,6 @@ export function Session(props: {
     if (!messageID) return messages()
     const index = messages().findIndex((message) => message.id === messageID)
     return index === -1 ? messages() : messages().slice(0, index)
-  }
-  const messagesFromRevert = () => {
-    const messageID = session()?.revert?.messageID
-    if (!messageID) return []
-    const index = messages().findIndex((message) => message.id === messageID)
-    return index === -1 ? [] : messages().slice(index)
   }
   const currentLocation = useLocation()
   const location = createMemo(() => session()?.location ?? currentLocation.ref)
@@ -1050,13 +1043,7 @@ export function Session(props: {
       group: "Session",
       slash: { name: "timeline" },
       run: () => {
-        dialog.replace(() => (
-          <DialogTimeline
-            sessionID={route.sessionID}
-            onMove={jumpToMessage}
-            setPrompt={(value) => promptRef.current?.set(value)}
-          />
-        ))
+        dialog.replace(() => <DialogTimeline sessionID={route.sessionID} onMove={jumpToMessage} />)
       },
     },
     {
@@ -1098,55 +1085,6 @@ export function Session(props: {
           })
           .catch((error) => toast.show({ message: errorMessage(error), variant: "error" }))
         dialog.clear()
-      },
-    },
-    {
-      title: "Undo previous message",
-      id: "session.undo",
-      group: "Session",
-      slash: { name: "undo" },
-      run: () => {
-        const message = messagesBeforeRevert().findLast(
-          (message): message is SessionMessageUser => message.type === "user" && !!message.text.trim(),
-        )
-        if (!message) {
-          toast.show({ message: "Nothing to undo", variant: "error", duration: 3000 })
-          dialog.clear()
-          return
-        }
-        const sessionID = route.sessionID
-        const target = prompt()
-        void (async () => {
-          if (pendingDeliveries().has(message.id)) {
-            if (!(await mutatePending("cancel", message.id))) return
-          } else {
-            await client.api.session.interrupt({ sessionID })
-            await client.api.session.wait({ sessionID })
-            await client.api.session.revert.stage({ sessionID, messageID: message.id })
-          }
-          target?.set({
-            ...projectedPromptInput(message),
-            pasted: [],
-          })
-        })().catch((error) => toast.show({ message: errorMessage(error), variant: "error", duration: 5000 }))
-        dialog.clear()
-      },
-    },
-    {
-      title: "Redo",
-      id: "session.redo",
-      group: "Session",
-      enabled: !!session()?.revert?.messageID,
-      slash: { name: "redo" },
-      run: () => {
-        void (async () => {
-          const error = await client.api.session.revert.clear({ sessionID: route.sessionID }).then(
-            () => undefined,
-            (error) => error,
-          )
-          if (error) toast.show({ message: errorMessage(error), variant: "error", duration: 5000 })
-          dialog.clear()
-        })()
       },
     },
     {
@@ -1554,12 +1492,6 @@ export function Session(props: {
                   )}
                 </For>
                 <BackgroundToolHint messages={messages()} />
-                <Show when={session()?.revert?.messageID}>
-                  <RevertMessage
-                    count={messagesFromRevert().filter((message) => message.type === "user").length}
-                    files={session()!.revert!.files ?? []}
-                  />
-                </Show>
                 <Show when={navigationSlack()}>
                   {(height) => <box id={NAVIGATION_SLACK_ID} height={height()} flexShrink={0} />}
                 </Show>
@@ -2245,88 +2177,6 @@ function CompactionQueued() {
   )
 }
 
-function RevertMessage(props: {
-  count: number
-  files: ReadonlyArray<{
-    readonly file: string
-    readonly status: "added" | "modified" | "deleted"
-    readonly additions: number
-    readonly deletions: number
-  }>
-}) {
-  const ctx = use()
-  const theme = useTheme()
-  const route = useRouteData("session")
-  const client = useClient()
-  const toast = useToast()
-  const renderer = useRenderer()
-  const [hover, setHover] = createSignal(false)
-  const redoKey = Keymap.useShortcut("session.redo")
-  return (
-    <box
-      onMouseOver={() => setHover(true)}
-      onMouseOut={() => setHover(false)}
-      onMouseUp={() => {
-        if (renderer.getSelection()?.getSelectedText()) return
-        void (async () => {
-          const error = await client.api.session.revert.clear({ sessionID: route.sessionID }).then(
-            () => undefined,
-            (error) => error,
-          )
-          if (error) toast.show({ message: errorMessage(error), variant: "error", duration: 5000 })
-        })()
-      }}
-      flexShrink={0}
-      marginTop={1}
-      border={["left"]}
-      customBorderChars={SplitBorder.customBorderChars}
-      borderColor={theme.background.raised.base}
-    >
-      <box
-        paddingTop={1}
-        paddingBottom={1}
-        paddingLeft={2}
-        backgroundColor={hover() ? theme.decrease(theme.background.raised.base) : theme.background.raised.base}
-      >
-        <text fg={theme.text.muted}>
-          {props.count} message{props.count === 1 ? "" : "s"} reverted
-        </text>
-        <Show when={props.files.length > 0}>
-          <box paddingTop={1} paddingBottom={1} flexDirection="column">
-            <For each={props.files}>
-              {(file) => (
-                <box flexDirection="row" gap={1} flexShrink={0}>
-                  <text fg={theme.text.muted}>{statusLabel(file.status)}</text>
-                  <FilePath
-                    value={file.file}
-                    maxWidth={Math.max(
-                      2,
-                      ctx.width -
-                        5 -
-                        (file.additions > 0 ? stringWidth(`+${file.additions}`) + 1 : 0) -
-                        (file.deletions > 0 ? stringWidth(`-${file.deletions}`) + 1 : 0),
-                    )}
-                    fg={theme.text.base}
-                  />
-                  <Show when={file.additions > 0}>
-                    <text fg={theme.diff.text.added}>+{file.additions}</text>
-                  </Show>
-                  <Show when={file.deletions > 0}>
-                    <text fg={theme.diff.text.removed}>-{file.deletions}</text>
-                  </Show>
-                </box>
-              )}
-            </For>
-          </box>
-        </Show>
-        <text fg={theme.text.muted}>
-          <span style={{ fg: theme.text.base }}>{redoKey()}</span> or /redo to restore
-        </text>
-      </box>
-    </box>
-  )
-}
-
 function ShellMessage(props: { message: Extract<SessionMessageInfo, { type: "shell" }> }) {
   const error = createMemo(() => {
     if (props.message.status === "killed") return "Command cancelled"
@@ -2366,7 +2216,6 @@ function UserMessage(props: { message: SessionMessageUser }) {
   const delivery = createMemo(() => ctx.pendingDelivery(props.message.id))
   const dialog = useDialog()
   const renderer = useRenderer()
-  const promptRef = usePromptRef()
 
   const updatePendingSteer = async (action: "queue" | "cancel") => {
     if (await ctx.mutatePending(action, props.message.id)) dialog.clear()
@@ -2408,13 +2257,7 @@ function UserMessage(props: { message: SessionMessageUser }) {
             }
             // The dialog outlives this row, whose props go stale when a resync drops the message.
             const messageID = props.message.id
-            dialog.replace(() => (
-              <DialogMessage
-                messageID={messageID}
-                sessionID={ctx.sessionID}
-                setPrompt={(value) => promptRef.current?.set(value)}
-              />
-            ))
+            dialog.replace(() => <DialogMessage messageID={messageID} sessionID={ctx.sessionID} />)
           }}
           paddingTop={1}
           paddingBottom={1}

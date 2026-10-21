@@ -199,12 +199,7 @@ export function createActiveSessionRegion(input: {
 
   onMount(() => makeEventListener(document, "keydown", handleKeyDown))
 
-  const revert = createSessionRevert({
-    session: input.session,
-    setActiveMessage: input.timeline.actions.setActiveMessage,
-  })
-
-  const revertMessage: NonNullable<SessionUserActions["revert"]> = ({ messageID }) => revert.to(messageID)
+  const revert = createSessionRevert()
   const fork = useSessionFork()
   const forkMessage: NonNullable<SessionUserActions["fork"]> = (target) => fork(target).then(() => undefined)
 
@@ -272,7 +267,6 @@ export function createActiveSessionRegion(input: {
       move: state.background.move,
     },
     navigateMessageByOffset: input.timeline.actions.navigateMessage,
-    revert,
     focusInput: focus,
     model: () => {
       const selection = controls().model.selection
@@ -343,11 +337,6 @@ export function createActiveSessionRegion(input: {
     },
     actions: {
       timeline: {
-        get revert() {
-          if (input.session.data.isChild()) return
-
-          return revertMessage
-        },
         get fork() {
           if (input.session.data.isChild()) return
 
