@@ -3,22 +3,13 @@ import { useData } from "../../context/data"
 import { DialogSelect } from "../../ui/dialog-select"
 import { useClipboard } from "../../context/clipboard"
 import { useToast } from "../../ui/toast"
-import { useClient } from "../../context/client"
-import { errorMessage } from "../../util/error"
 import { DialogFork } from "./dialog-fork"
-import type { PromptInfo } from "../../prompt/history"
-import { projectedPromptInput } from "../../prompt/codec"
 import { useNewDesigns } from "../../config"
 
-export function DialogMessage(props: {
-  messageID: string
-  sessionID: string
-  setPrompt?: (prompt: PromptInfo) => void
-}) {
+export function DialogMessage(props: { messageID: string; sessionID: string }) {
   const data = useData()
   const clipboard = useClipboard()
   const toast = useToast()
-  const client = useClient()
   const newDesigns = useNewDesigns()
   const message = createMemo(() => data.session.message.get(props.sessionID, props.messageID))
 
@@ -32,24 +23,6 @@ export function DialogMessage(props: {
           value: "message.jump",
           description: "view message in session",
           onSelect: (dialog) => dialog.clear(),
-        },
-        {
-          title: "Revert",
-          value: "session.revert",
-          description: "undo messages and file changes",
-          onSelect: (dialog) => {
-            const value = message()
-            if (value?.type === "user") {
-              props.setPrompt?.({
-                ...projectedPromptInput(value),
-                pasted: [],
-              })
-            }
-            void client.api.session.revert
-              .stage({ sessionID: props.sessionID, messageID: props.messageID })
-              .catch((error) => toast.show({ message: errorMessage(error), variant: "error", duration: 5000 }))
-            dialog.clear()
-          },
         },
         {
           title: "Copy",

@@ -274,57 +274,23 @@ test.describe("revert", () => {
     pageMessages: () => ({ items: messages }),
   }
 
-  test("reverts directly to the selected user message", async ({ page }) => {
-    const staged: { sessionID: string; messageID: string }[] = []
-    const { session } = await openSession(page, { ...workspace, onRevertStage: (input) => staged.push(input) })
-    const settles: string[] = []
-    page.on("request", (request) => {
-      const path = new URL(request.url()).pathname
-      const step = ["/interrupt", "/wait", "/revert/stage"].find((suffix) => path.endsWith(`/${session.id}${suffix}`))
-
-      if (step) settles.push(step)
-    })
+  // VeoveoAI fork: undo, redo and message revert are removed; Lore owns source history (see VEOVEO_FORK.md).
+  test("offers no message revert, undo or redo", async ({ page }) => {
+    const { editor } = await openSession(page, workspace)
     const message = page.locator('[data-message-id="msg_second"]')
     await message.hover()
+    await expect(message.getByRole("button", { name: "Revert message" })).toHaveCount(0)
 
-    const response = page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        new URL(response.url()).pathname === `/api/session/${session.id}/revert/stage`,
-    )
+    const suggestions = page.locator('[data-component="composer-suggestions"] [data-suggestion-id]')
+    await editor.pressSequentially("/compact")
+    await expect(suggestions.filter({ hasText: "/compact" })).not.toHaveCount(0)
 
-    await message.getByRole("button", { name: "Revert message" }).click()
-    expect((await response).ok()).toBe(true)
-
-    await expect(page.getByRole("textbox", { name: "Prompt" })).toHaveText("Second prompt")
-    expect(staged).toEqual([{ sessionID: session.id, messageID: "msg_second" }])
-    // Interrupt acknowledges before the run settles, and the server refuses to stage while it is active.
-    expect(settles).toEqual(["/interrupt", "/wait", "/revert/stage"])
-  })
-
-  test("redo restores every reverted message at once, as in the TUI", async ({ page }) => {
-    const staged: { sessionID: string; messageID: string }[] = []
-
-    const { editor } = await openSession(page, {
-      ...workspace,
-      sessions: [{ id: "ses_revert_redo", title: "Session message revert", revert: { messageID: "msg_first" } }],
-      onRevertStage: (input) => staged.push(input),
-    })
-
-    const cleared = page.waitForResponse(
-      (response) =>
-        response.request().method() === "DELETE" &&
-        new URL(response.url()).pathname === "/api/session/ses_revert_redo/revert",
-    )
-
-    await editor.pressSequentially("/redo")
-    await expect(
-      page.locator('[data-component="composer-suggestions"] [data-suggestion-id][data-active]'),
-    ).toContainText("/redo")
-    await editor.press("Enter")
-
-    expect((await cleared).ok()).toBe(true)
-    expect(staged).toEqual([])
+    for (const name of ["/undo", "/redo"]) {
+      await editor.press("ControlOrMeta+A")
+      await editor.press("Backspace")
+      await editor.pressSequentially(name)
+      await expect(suggestions.filter({ hasText: name })).toHaveCount(0)
+    }
   })
 
   test("hides revert actions in a child session", async ({ page }) => {

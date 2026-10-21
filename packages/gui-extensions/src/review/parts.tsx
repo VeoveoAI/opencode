@@ -60,7 +60,7 @@ export function ReviewEmpty(props: { review: ReviewModel; loadingClass: string }
       </Match>
       <Match when={props.review.noGit()}>
         <div class="h-full flex flex-col">
-          <SessionReviewEmptyNoGitV2 pending={props.review.initializingGit()} onInitGit={props.review.initializeGit} />
+          <SessionReviewEmptyNoGitV2 />
         </div>
       </Match>
       <Match when={true}>
@@ -82,7 +82,7 @@ export function ReviewPanelEmpty(props: { review: ReviewModel }) {
         <div class="px-6 py-4 text-text-weak">{ctx.t("loadingChanges")}</div>
       </Match>
       <Match when={props.review.noGit()}>
-        <SessionReviewEmptyNoGitV2 pending={props.review.initializingGit()} onInitGit={props.review.initializeGit} />
+        <SessionReviewEmptyNoGitV2 />
       </Match>
       <Match when={true}>
         <SessionReviewEmptyChangesV2 />

@@ -25,7 +25,6 @@ import type { SessionModel } from "../model"
 import type { SessionScreenLayout } from "../screen-layout"
 import { syncPromptModel } from "../session-model-helpers"
 import type { SessionTimelineInteraction } from "../timeline/interaction"
-import { createSessionRevert } from "../revert"
 import { SessionComposerRegion } from "./session-composer-region"
 import { createSessionComposerController, type SessionComposerController } from "./controller"
 import { SessionQueuePanel } from "./queue-panel"
@@ -183,13 +182,6 @@ export function createActiveSessionRegion(input: {
 
   onMount(() => makeEventListener(document, "keydown", handleKeyDown))
 
-  const revert = createSessionRevert({
-    session: input.session,
-    setActiveMessage: input.timeline.actions.setActiveMessage,
-  })
-
-  const revertMessage: NonNullable<SessionUserActions["revert"]> = ({ messageID }) => revert.to(messageID)
-
   const notifyFailed = () => {
     showToast({ title: language.t("common.requestFailed") })
   }
@@ -217,7 +209,6 @@ export function createActiveSessionRegion(input: {
       move: state.background.move,
     },
     navigateMessageByOffset: input.timeline.actions.navigateMessage,
-    revert,
     focusInput: focus,
     model: () => {
       const selection = controls().model.selection
@@ -270,11 +261,6 @@ export function createActiveSessionRegion(input: {
     },
     actions: {
       timeline: {
-        get revert() {
-          if (input.session.data.isChild()) return
-
-          return revertMessage
-        },
         get pending() {
           if (input.session.data.isChild()) return
 

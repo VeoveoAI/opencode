@@ -158,8 +158,6 @@ export const Definitions = {
   messages_previous_user: keybind("none", "Navigate to previous user message"),
   messages_last_user: keybind("alt+end", "Navigate to last user message"),
   messages_copy: keybind("<leader>y", "Copy message"),
-  messages_undo: keybind("<leader>u", "Undo message"),
-  messages_redo: keybind("<leader>r", "Redo message"),
   display_thinking: keybind("none", "Toggle thinking blocks visibility"),
 
   prompt_submit: keybind("none", "Submit prompt"),
@@ -358,8 +356,6 @@ export const CommandMap = {
   messages_previous_user: "session.message.user.previous",
   messages_last_user: "session.messages_last_user",
   messages_copy: "messages.copy",
-  messages_undo: "session.undo",
-  messages_redo: "session.redo",
   display_thinking: "session.toggle.thinking",
   prompt_submit: "prompt.submit",
   prompt_queue: "prompt.queue",
