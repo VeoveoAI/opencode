@@ -25,6 +25,26 @@ unrelated to fork changes:
   after the connection to the server is dropped")
 - tui: 7 tests in `test/plugin-source.test.ts` and `test/plugin-keymap.test.tsx`
 
+## Toolchain
+
+- `package.json` pins Bun through `packageManager` (`bun@1.4.2` at this base). Re-read it
+  after every upstream update.
+- The husky pre-push hook rejects a Bun older than the pin, then runs `bun run check`.
+  Do not bypass it with `--no-verify`.
+- On the Mac, the default `~/.bun/bin/bun` is 1.3.13 (2026-10-20). Pushing from this
+  checkout fails until the pinned Bun comes first on `PATH`. Either:
+  - **Machine-wide:** `curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"`. This
+    changes Bun for every project on the Mac, so ask the user first.
+  - **Per session:**
+    1. Download `bun-darwin-aarch64.zip` and `SHASUMS256.txt` from
+       `https://github.com/oven-sh/bun/releases/tag/bun-v1.4.2` into an empty temporary
+       directory.
+    2. Verify the zip with `grep " bun-darwin-aarch64.zip$" SHASUMS256.txt | shasum -a 256 -c -`.
+    3. Unzip it, then push with `PATH="<dir>/bun-darwin-aarch64:$PATH" git push origin main`.
+- After switching Bun, run `bun install --frozen-lockfile` if workspace links are stale.
+  It changes no source or lock files.
+- The Linux build host builds with the pinned Bun.
+
 ## Carried
 
 ### MCP Tasks (`46b2429`, `7b12c60`)
