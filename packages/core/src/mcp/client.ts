@@ -18,6 +18,7 @@ import {
   type ElicitResult,
   type GetPromptResult,
   type Implementation,
+  type McpSubscription,
   type OAuthClientProvider,
   type Prompt,
   type ReadResourceResult,
@@ -368,6 +369,40 @@ export const connect = Effect.fnUntraced(function* (
       }),
     )
     const catalog = { timeout: config.timeout?.catalog ?? DEFAULT_CATALOG_TIMEOUT }
+    // The SDK opens the list-changed subscription once, at connect, and never reopens it. A server
+    // restart or a proxy that drops the stream would end list-changed notifications for the rest of
+    // the connection, so reopen it after any close but our own, backing off to every 30 s, and reload
+    // the lists it covers once it is back: changes in the gap were never delivered.
+    // Retrying forever, it fails only when the connection's scope interrupts it.
+    const keepListening = (subscription: McpSubscription): Effect.Effect<void, unknown> =>
+      Effect.promise(() => subscription.closed).pipe(
+        Effect.flatMap((reason) =>
+          reason === "local"
+            ? Effect.void
+            : Effect.logWarning("MCP list-changed subscription closed, reopening", { server, reason }).pipe(
+                Effect.andThen(
+                  Effect.tryPromise(() => client.listen(subscription.honoredFilter, catalog)).pipe(
+                    Effect.tapError((error) =>
+                      Effect.logWarning("failed to reopen MCP list-changed subscription", {
+                        server,
+                        error: describe(error),
+                      }),
+                    ),
+                    Effect.retry(Schedule.min([Schedule.exponential("1 second"), Schedule.spaced("30 seconds")])),
+                  ),
+                ),
+                Effect.tap((reopened) =>
+                  Effect.sync(() => {
+                    if (reopened.honoredFilter.toolsListChanged) changed.tools()
+                    if (reopened.honoredFilter.promptsListChanged) changed.prompts()
+                    if (reopened.honoredFilter.resourcesListChanged) changed.resources()
+                  }),
+                ),
+                Effect.flatMap(keepListening),
+              ),
+        ),
+      )
+    if (client.autoOpenedSubscription) yield* Effect.forkScoped(keepListening(client.autoOpenedSubscription))
     const execution = config.timeout?.execution ?? DEFAULT_EXECUTION_TIMEOUT
     const request = <A>(what: string, run: (signal: AbortSignal) => Promise<A>) =>
       Effect.tryPromise({ try: run, catch: failure }).pipe(

@@ -122,9 +122,12 @@ function resourceServer(
           progressToken: unknown
         }>,
         initializations: 0,
+        listens: 0,
         urls: [] as string[],
         sessions: [] as string[],
       }
+      // The open subscriptions/listen response streams, which `dropListens` cuts as a proxy would.
+      const listenStreams = new Set<ReadableStreamDefaultController<Uint8Array>>()
       // One Server speaks one session, so a restart is a fresh Server and transport. Requests that
       // still carry the previous session id are then unknown to the new transport.
       const server = () => {
@@ -242,7 +245,35 @@ function resourceServer(
           if (typeof body === "object" && body !== null && "method" in body && body.method === "initialize") {
             state.initializations += 1
           }
-          return (await input.respond?.(request)) ?? modern?.fetch(request) ?? current.transport.handleRequest(request)
+          const answer = await ((await input.respond?.(request)) ??
+            modern?.fetch(request) ??
+            current.transport.handleRequest(request))
+          const listen =
+            typeof body === "object" && body !== null && "method" in body && body.method === "subscriptions/listen"
+          if (!listen || !answer.body) return answer
+          state.listens += 1
+          const reader = answer.body.getReader()
+          let stream: ReadableStreamDefaultController<Uint8Array> | undefined
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start: (controller) => {
+                stream = controller
+                listenStreams.add(controller)
+              },
+              pull: async (controller) => {
+                const next = await reader.read()
+                if (next.done) {
+                  listenStreams.delete(controller)
+                  controller.close()
+                } else controller.enqueue(next.value)
+              },
+              cancel: (reason) => {
+                if (stream) listenStreams.delete(stream)
+                return reader.cancel(reason)
+              },
+            }),
+            { status: answer.status, headers: answer.headers },
+          )
         },
       })
       return {
@@ -251,6 +282,10 @@ function resourceServer(
         clientVersion: () => current.protocol.getClientVersion(),
         sendResourceListChanged: () =>
           modern ? Promise.resolve(modern.notify.resourcesChanged()) : current.protocol.sendResourceListChanged(),
+        dropListens: () => {
+          for (const stream of listenStreams) stream.error(new Error("the tunnel closed"))
+          listenStreams.clear()
+        },
         completeElicitation: () => current.protocol.createElicitationCompletionNotifier("elicitation-test")(),
         restart: async () => {
           await current.protocol.close().catch(() => {})
@@ -1120,6 +1155,35 @@ describe.each([
       ),
     )
   })
+})
+
+test("reopens a list-changed subscription whose stream the transport dropped", async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* resourceServer({ modern: true, listChanged: true })
+        const connection = yield* connect(
+          "resources",
+          new ConfigMCP.Remote({ type: "remote", url: server.url, oauth: false, protocol: "2026-07-28" }),
+          import.meta.dir,
+        )
+        expect(server.state.listens).toBe(1)
+
+        // A proxy closes the stream: the client listens again and reloads what it may have missed.
+        const reloaded = yield* Deferred.make<void>()
+        connection.onResourcesChanged(() => Deferred.doneUnsafe(reloaded, Exit.void))
+        server.dropListens()
+        yield* Deferred.await(reloaded).pipe(Effect.timeout("5 seconds"))
+        expect(server.state.listens).toBe(2)
+
+        // Changes reach the client through the reopened stream.
+        const changed = yield* Deferred.make<void>()
+        connection.onResourcesChanged(() => Deferred.doneUnsafe(changed, Exit.void))
+        yield* Effect.promise(server.sendResourceListChanged)
+        yield* Deferred.await(changed).pipe(Effect.timeout("5 seconds"))
+      }),
+    ),
+  )
 })
 
 test("lists, reads, and reports MCP resource changes", async () => {
