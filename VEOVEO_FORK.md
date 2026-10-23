@@ -134,13 +134,15 @@ must find no client callers.
 
 These live in `veoveo-template-installation/computer/opencode.json`, not in this fork:
 
-- `"plugins": ["-opencode.vcs.git", "-opencode.vcs.hg"]` removes the built-in VCS
+- `"plugins": ["-opencode.vcs.git", "-opencode.vcs.hg", ...]` removes the built-in VCS
   providers, using the native plugin remove directive.
+- The same list removes `opencode.provider.ollama`, `opencode.provider.lmstudio` and
+  `opencode.provider.vllm`, which otherwise probe loopback model servers every 30 s.
 - `"snapshots": false` turns off turn snapshots.
 
-On update: confirm the IDs `opencode.vcs.git`/`opencode.vcs.hg` (`packages/core/src/plugin/vcs/`)
-and the `snapshots` key (`packages/schema/src/config.ts`) still exist. A renamed ID
-silently stops matching.
+On update: confirm the IDs `opencode.vcs.git`/`opencode.vcs.hg` (`packages/core/src/plugin/vcs/`),
+the three provider IDs (`packages/core/src/plugin/provider/`) and the `snapshots` key
+(`packages/schema/src/config.ts`) still exist. A renamed ID silently stops matching.
 
 ## Git Paths Intentionally Left In Core
 
