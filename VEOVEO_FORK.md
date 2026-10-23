@@ -57,6 +57,18 @@ unrelated to fork changes:
 - On update: if upstream adopts Tasks or a newer SDK, re-check whether the client patch
   is still needed, then rerun `mcp-tasks.test.ts`.
 
+### Reopened MCP List-Changed Subscription (`d8cf312`)
+
+- `packages/core/src/mcp/client.ts` reopens the SDK's auto-opened `subscriptions/listen`
+  subscription after any close but its own (a server restart or a proxy that drops the
+  stream), backing off to every 30 s, then reloads the lists it covers.
+- On a Computer, the sandbox proxy closes every L7 tunnel when a provider credential
+  refresh publishes a new policy generation, so without this the Hub's list-changed
+  notifications stopped after the first refresh.
+- On update: if upstream or a newer SDK reopens the subscription itself, drop this and
+  keep the test `reopens a list-changed subscription whose stream the transport dropped`
+  in `packages/core/test/mcp.test.ts`.
+
 ### Hosted Browser Mount Behind A Trusted Proxy (`376324a`, `4bd4891`, `ed62aad`)
 
 - `opencode serve --trusted-local-proxy --base-path <path>`: the authenticated proxy
