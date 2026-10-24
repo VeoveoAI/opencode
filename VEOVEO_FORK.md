@@ -69,7 +69,7 @@ unrelated to fork changes:
   keep the test `reopens a list-changed subscription whose stream the transport dropped`
   in `packages/core/test/mcp.test.ts`.
 
-### The Person's Own Shell Commands Shown Open (`e7821a7`)
+### The Person's Own Shell Commands Shown Open
 
 - A command the person runs in `!` shell mode is their own input, like a prompt. The
   web timeline (`packages/session-ui/src/timeline/projection.ts` and
