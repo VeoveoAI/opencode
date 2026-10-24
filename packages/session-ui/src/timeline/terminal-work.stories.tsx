@@ -11,7 +11,6 @@ import {
   expandedShellDocument,
   recoveryDocument,
   standaloneShellCompletedDocument,
-  standaloneShellFailedDocument,
   standaloneShellRunningDocument,
   terminalFailedDocument,
   terminalPassedDocument,
@@ -19,7 +18,6 @@ import {
 } from "../storybook/current-session-fixtures"
 import { storyDocument, storyTool } from "../storybook/current-session-scenarios"
 import { SessionTimeline } from "./session-timeline"
-import { timelinePresets } from "./detail"
 
 export default {
   title: "OpenCode/Work/Terminal",
@@ -68,20 +66,6 @@ export const UserCommandCompleted = {
       document={standaloneShellCompletedDocument}
       width="720px"
       shellToolDefaultOpen
-    />
-  ),
-}
-
-export const UserCommandFailedInCompactTimeline = {
-  args: { outcome: "failed" },
-  argTypes: { outcome: { control: "select", options: ["failed", "completed"] } },
-  render: (args: { outcome: "failed" | "completed" }) => (
-    <CurrentSessionTimelineStory
-      title="User command in the compact timeline"
-      description="A command the person ran shows its output at once in the default compact timeline, with a failure's exit code beside it."
-      document={args.outcome === "failed" ? standaloneShellFailedDocument : standaloneShellCompletedDocument}
-      width="720px"
-      timelineDetail={timelinePresets.find((preset) => preset.id === "compact")!.value}
     />
   ),
 }

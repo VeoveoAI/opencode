@@ -361,9 +361,9 @@ export namespace Timeline {
 
     const visibleTurns = detail
       ? turns.filter((turn) => {
-          // A command the person ran with `!` is their own input, like a prompt: the shell
-          // setting places the agent's shell calls, never it.
-          if (turn.user || turn.shell) return true
+          if (turn.user) return true
+
+          if (turn.shell && (detail.shell.placement !== "hidden" || shellFailed(turn.shell))) return true
 
           return turn.entries.some((entry) =>
             entry.type === "notice"
@@ -387,7 +387,9 @@ export namespace Timeline {
         if (turn.shell)
           return [
             ...(index > 0 ? [new TimelineRow.TurnGap({ userMessageID: turn.id })] : []),
-            new TimelineRow.Shell({ userMessageID: turn.id, messageID: turn.shell.id }),
+            ...(!detail || detail.shell.placement !== "hidden" || shellFailed(turn.shell)
+              ? [new TimelineRow.Shell({ userMessageID: turn.id, messageID: turn.shell.id })]
+              : []),
             ...turn.entries.flatMap((entry) =>
               entry.type === "notice" && visibleNotice(entry.message)
                 ? [new TimelineRow.Notice({ userMessageID: turn.id, messageID: entry.message.id })]
@@ -640,6 +642,12 @@ function isFailedIdle(message: SessionMessageInfo): message is FailedIdle {
   return message.type === "idle" && message.outcome === "failed" && !!message.error
 }
 
+function shellFailed(message: SessionMessageShell) {
+  return (
+    message.status === "timeout" || (message.status === "exited" && message.exit !== undefined && message.exit !== 0)
+  )
+}
+
 function groupMessages(rows: TimelineRow.TimelineRow[], detail: TimelineDetail, separate: ReadonlySet<string>) {
   return rows.reduce<TimelineRow.TimelineRow[]>((result, row) => {
     const previous = result.at(-1)
@@ -647,7 +655,9 @@ function groupMessages(rows: TimelineRow.TimelineRow[], detail: TimelineDetail, 
     const above = Predicate.isTagged(previous, "Activity") ? result.at(-2) : previous
 
     const current =
-      Predicate.isTagged(row, "Notice") && detail.notices.placement === "grouped" && !separate.has(row.messageID)
+      ((Predicate.isTagged(row, "Notice") && detail.notices.placement === "grouped") ||
+        (Predicate.isTagged(row, "Shell") && detail.shell.placement === "grouped")) &&
+      !separate.has(row.messageID)
         ? new TimelineRow.AssistantPart({
             userMessageID: row.userMessageID,
             previousAssistantPart: Predicate.isTagged(above, "AssistantPart"),

@@ -684,16 +684,25 @@ export function createSessionTimelineRowRenderer(input: {
       return value?.type === "shell" ? value : undefined
     })
 
-    // The person ran this command and waits for its answer: its output shows at once,
-    // whatever the shell setting does with the agent's shell calls, until they close it.
+    const defaultOpen = createMemo(() => {
+      if (!input.timelineDetail) return input.shellToolDefaultOpen()
+      const value = message()
+
+      return (
+        input.timelineDetail().shell.details === "expanded" ||
+        (input.timelineDetail().shell.placement === "hidden" &&
+          (value?.status === "timeout" || (value?.status === "exited" && value.exit !== undefined && value.exit !== 0)))
+      )
+    })
+
     return (
       <Show when={message()}>
         {(message) => (
           <div data-slot="session-turn-message-container" class={`w-full ${props.grouped ? "" : padding()}`}>
             <SessionShellMessage
               message={message()}
-              defaultOpen
-              open={input.disclosure.value(message().id) ?? true}
+              defaultOpen={defaultOpen()}
+              open={input.disclosure.value(message().id) ?? (input.timelineDetail ? defaultOpen() : undefined)}
               onOpenChange={(open) => input.disclosure.set(message().id, open)}
             />
           </div>

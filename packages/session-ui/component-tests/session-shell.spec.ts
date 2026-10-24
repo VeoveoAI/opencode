@@ -55,24 +55,3 @@ for (const [id, output] of [
     await expect(root.locator('[data-component="session-shell-message"] [data-slot="bash-result"]')).toHaveText(output)
   })
 }
-
-for (const [outcome, output, exit] of [
-  ["failed", "Usage: lore <command>", "Command exited with code 2"],
-  ["completed", " M packages/session-ui/src/timeline/session-timeline.tsx", undefined],
-] as const) {
-  story(`shows a command the person ran open in the compact timeline: ${outcome}`, async ({ mount }) => {
-    const root = await mount("current-session-terminal-work--user-command-failed-in-compact-timeline", {
-      args: { outcome },
-    })
-
-    const shell = root.locator('[data-component="session-shell-message"]')
-    const error = shell.locator('[data-kind="tool-error-card"]')
-    await expect(root.locator('[data-component="collapsed-tool-group"]')).toHaveCount(0)
-    await expect(shell.locator('[data-slot="collapsible-trigger"]').first()).toHaveAttribute("aria-expanded", "true")
-    await expect(shell.locator('[data-slot="bash-result"]')).toContainText(output)
-
-    if (exit) await expect(error).toContainText(exit)
-
-    if (!exit) await expect(error).toHaveCount(0)
-  })
-}

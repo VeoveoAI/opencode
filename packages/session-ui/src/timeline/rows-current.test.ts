@@ -67,47 +67,6 @@ describe("current session timeline rows", () => {
     expect(result.rows.map(TimelineRow.key)).toEqual(["shell:msg_shell"])
   })
 
-  test.each(timelinePresets.map((preset) => [preset.id, preset.value] as const))(
-    "keeps a command the person ran on its own row with the %s timeline",
-    (_, detail) => {
-      const source = [
-        {
-          id: "msg_shell",
-          type: "shell",
-          shellID: "shell_1",
-          command: "lore",
-          status: "exited",
-          exit: 2,
-          output: { output: "Usage: lore <command>", cursor: 21, size: 21, truncated: false },
-          time: { created: 1, completed: 2 },
-        },
-        {
-          id: "msg_shell_ok",
-          type: "shell",
-          shellID: "shell_2",
-          command: "pwd",
-          status: "exited",
-          exit: 0,
-          output: { output: "/sandbox", cursor: 8, size: 8, truncated: false },
-          time: { created: 3, completed: 4 },
-        },
-      ] satisfies SessionMessageInfo[]
-
-      const rows = Timeline.constructSessionMessageRows(
-        source,
-        true,
-        { type: "idle" },
-        undefined,
-        false,
-        false,
-        undefined,
-        detail,
-      ).rows
-
-      expect(rows.map(TimelineRow.key)).toEqual(["shell:msg_shell", "turn-gap:msg_shell_ok", "shell:msg_shell_ok"])
-    },
-  )
-
   test("keeps assistant content when no user root is available", () => {
     const source = [
       {
