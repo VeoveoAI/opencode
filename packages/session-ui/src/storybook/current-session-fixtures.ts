@@ -353,6 +353,24 @@ export const standaloneShellCompletedDocument = document([
   },
 ] satisfies SessionMessageInfo[])
 
+export const standaloneShellFailedDocument = document([
+  {
+    id: "msg_shell_failed",
+    type: "shell",
+    shellID: "shell_failed",
+    command: "lore",
+    status: "exited",
+    exit: 2,
+    output: {
+      output: "Usage: lore <command>\n\nCommands:\n  clone   Copy a repository\n  sync    Exchange revisions",
+      cursor: 89,
+      size: 89,
+      truncated: false,
+    },
+    time: { created: STORY_TIME + 32_000, completed: STORY_TIME + 32_200 },
+  },
+] satisfies SessionMessageInfo[])
+
 export const thinkingDocument = document(
   [user("msg_user_thinking", "Find why the Session header shifts after the first streamed response.", 32_000)],
   { type: "busy" },

@@ -3,6 +3,7 @@ import { File } from "../components/file"
 import { DataProvider } from "../context/data"
 import type { SessionUserActions } from "../message/current-message"
 import type { SessionUserPresentation } from "../timeline/session-timeline"
+import type { TimelineDetail } from "../timeline/detail"
 import { SessionTimeline } from "../timeline/session-timeline"
 import { FileComponentProvider } from "@opencode/ui/context/file"
 import { Button } from "@opencode/ui/button"
@@ -77,6 +78,7 @@ export function CurrentSessionTimelineStory(props: {
   width?: string
   shellToolDefaultOpen?: boolean
   editToolDefaultOpen?: boolean
+  timelineDetail?: TimelineDetail
   turnDiffs?: boolean
 }) {
   // Inline story documents rebuild their messages on every prop read, and the timeline projection keys text by identity.
@@ -120,6 +122,7 @@ export function CurrentSessionTimelineStory(props: {
                   actions={actions}
                   shellToolDefaultOpen={props.shellToolDefaultOpen}
                   editToolDefaultOpen={props.editToolDefaultOpen}
+                  timelineDetail={props.timelineDetail}
                   turnDiffs={props.turnDiffs}
                 />
               </CurrentSessionProviders>

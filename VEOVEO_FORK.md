@@ -69,6 +69,21 @@ unrelated to fork changes:
   keep the test `reopens a list-changed subscription whose stream the transport dropped`
   in `packages/core/test/mcp.test.ts`.
 
+### The Person's Own Shell Commands Shown Open
+
+- A command the person runs in `!` shell mode is their own input, like a prompt. The
+  web timeline (`packages/session-ui/src/timeline/projection.ts` and
+  `session-timeline-row.tsx`) always gives it its own row and opens its output, whatever
+  the timeline's shell setting; that setting still places and collapses the agent's
+  shell calls. A failure's exit code shows below its output.
+- Upstream's default `compact` timeline grouped these into a collapsed "Used 1 Shell"
+  group with a collapsed row, and `quiet` hid a successful one: on a Computer, a bare
+  `lore` (help on stdout, exit 2) looked like it printed nothing.
+- On update: if upstream shows user shell output by default, drop this and keep the
+  tests `keeps a command the person ran on its own row with the %s timeline`
+  (`rows-current.test.ts`) and `shows a command the person ran open in the compact
+  timeline` (`component-tests/session-shell.spec.ts`).
+
 ### Hosted Browser Mount Behind A Trusted Proxy (`376324a`, `4bd4891`, `ed62aad`)
 
 - `opencode serve --trusted-local-proxy --base-path <path>`: the authenticated proxy
